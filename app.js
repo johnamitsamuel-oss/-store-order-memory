@@ -1,6 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
 const cfg = window.APP_CONFIG || {};
+
 const configured =
   cfg.SUPABASE_URL &&
   cfg.SUPABASE_PUBLISHABLE_KEY &&
@@ -20,41 +21,28 @@ const app = $("#app");
 
 let session = null;
 let workspace = null;
+let memberRole = "staff";
 let products = [];
 let orders = [];
 let channel = null;
 
 function localDateKey(d = new Date()) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function startOfWeekKey() {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-
-  return localDateKey(d);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function parseDateKey(k) {
+  if (!k) return new Date();
+
   const [y, m, d] = k.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
 
-function daysBetween(a, b) {
-  return Math.floor((parseDateKey(b) - parseDateKey(a)) / 86400000);
-}
-
-function addDays(k, n) {
-  const d = parseDateKey(k);
-  d.setDate(d.getDate() + n);
-  return localDateKey(d);
-}
-
 function fmtDate(k) {
+  if (!k) return "";
+
   return parseDateKey(k).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -62,14 +50,32 @@ function fmtDate(k) {
   });
 }
 
+function fmtTimestamp(value) {
+  if (!value) return "";
+
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function msg(el, text = "") {
-  el.textContent = text;
+  if (el) el.textContent = text;
 }
 
 function setScreen(name) {
   authCard.classList.toggle("hidden", name !== "auth");
   workspaceCard.classList.toggle("hidden", name !== "workspace");
   app.classList.toggle("hidden", name !== "app");
+}
+
+function isSenior() {
+  return ["manager", "owner", "boss", "admin"].includes(
+    String(memberRole || "").toLowerCase()
+  );
 }
 
 $("#todayLabel").textContent = new Date().toLocaleDateString("en-US", {
@@ -87,12 +93,19 @@ if (!configured) {
 }
 
 async function bootstrap() {
-  if (!supabase) return setScreen("auth");
+  if (!supabase) {
+    setScreen("auth");
+    return;
+  }
 
   const { data } = await supabase.auth.getSession();
+
   session = data.session;
 
-  if (!session) return setScreen("auth");
+  if (!session) {
+    setScreen("auth");
+    return;
+  }
 
   await loadWorkspace();
 }
@@ -100,21 +113,26 @@ async function bootstrap() {
 async function loadWorkspace() {
   const { data, error } = await supabase
     .from("workspace_members")
-    .select("workspace_id, workspaces(id,name,invite_code)")
+    .select(
+      "workspace_id, role, workspaces(id,name,invite_code)"
+    )
     .eq("user_id", session.user.id)
     .limit(1)
     .maybeSingle();
 
   if (error) {
     msg($("#workspaceMessage"), error.message);
-    return setScreen("workspace");
+    setScreen("workspace");
+    return;
   }
 
   if (!data?.workspaces) {
-    return setScreen("workspace");
+    setScreen("workspace");
+    return;
   }
 
   workspace = data.workspaces;
+  memberRole = data.role || "staff";
 
   $("#workspaceTitle").textContent = workspace.name;
   $("#inviteCodeDisplay").textContent = workspace.invite_code;
@@ -126,6 +144,8 @@ async function loadWorkspace() {
 }
 
 async function refreshAll() {
+  if (!workspace) return;
+
   const [p, o] = await Promise.all([
     supabase
       .from("products")
@@ -138,7 +158,6 @@ async function refreshAll() {
       .from("orders")
       .select("*")
       .eq("workspace_id", workspace.id)
-      .order("ordered_on", { ascending: false })
       .order("created_at", { ascending: false }),
   ]);
 
@@ -187,71 +206,33 @@ function subscribeRealtime() {
     .subscribe();
 }
 
-function latestOrderFor(productId) {
-  return orders.find((o) => o.product_id === productId) || null;
+function activeOrders() {
+  return orders.filter(
+    (o) => !o.status || o.status === "active"
+  );
 }
 
-function currentWeekOrder(productId) {
-  const start = startOfWeekKey();
+function completedOrders() {
+  return orders.filter((o) => o.status === "completed");
+}
 
+function activeOrderFor(productId) {
   return (
-    orders.find(
-      (o) => o.product_id === productId && o.ordered_on >= start
+    activeOrders().find(
+      (o) => o.product_id === productId
     ) || null
   );
 }
 
-function dueInfo(product) {
-  const last = latestOrderFor(product.id);
-
-  if (!last) {
-    return {
-      status: "never",
-      label: "Never ordered — due now",
-      due: true,
-      next: localDateKey(),
-      last: null,
-    };
-  }
-
-  const next = addDays(last.ordered_on, product.reorder_weeks * 7);
-  const delta = daysBetween(localDateKey(), next);
-
-  if (delta <= 0) {
-    return {
-      status: "due-now",
-      label:
-        delta < 0
-          ? `Overdue by ${Math.abs(delta)} day${Math.abs(delta) === 1 ? "" : "s"}`
-          : "Due today",
-      due: true,
-      next,
-      last,
-    };
-  }
-
-  if (delta <= 7) {
-    return {
-      status: "due-soon",
-      label: `Due in ${delta} day${delta === 1 ? "" : "s"}`,
-      due: false,
-      next,
-      last,
-    };
-  }
-
-  return {
-    status: "not-due",
-    label: `Next due ${fmtDate(next)}`,
-    due: false,
-    next,
-    last,
-  };
+function productFor(productId) {
+  return products.find((p) => p.id === productId) || null;
 }
 
-function suggestedQty(product) {
-  const last = latestOrderFor(product.id);
-  return last?.quantity || product.default_quantity;
+function startingQty(product) {
+  return Math.max(
+    0,
+    Math.min(999, Number(product.default_quantity) || 1)
+  );
 }
 
 function renderAll() {
@@ -262,149 +243,280 @@ function renderAll() {
 }
 
 function renderStats() {
-  const due = products.filter(
-    (p) => dueInfo(p).due && !currentWeekOrder(p.id)
-  ).length;
+  const active = activeOrders();
 
-  const week = orders.filter(
-    (o) => o.ordered_on >= startOfWeekKey()
-  ).length;
+  if ($("#dueCount")) {
+    $("#dueCount").textContent = active.length;
+  }
 
-  $("#dueCount").textContent = due;
-  $("#weekOrderedCount").textContent = week;
-  $("#productCount").textContent = products.length;
+  if ($("#weekOrderedCount")) {
+    $("#weekOrderedCount").textContent = active.reduce(
+      (sum, o) => sum + (Number(o.quantity) || 0),
+      0
+    );
+  }
+
+  if ($("#productCount")) {
+    $("#productCount").textContent = products.length;
+  }
 }
 
 function renderWeek() {
   const host = $("#weekList");
+
+  if (!host) return;
+
   host.innerHTML = "";
 
-  $("#weekEmpty").classList.toggle("hidden", products.length > 0);
+  ensureCompleteOrderButton();
+
+  if ($("#weekEmpty")) {
+    $("#weekEmpty").classList.toggle(
+      "hidden",
+      products.length > 0
+    );
+  }
 
   const sorted = [...products].sort((a, b) => {
-    const ao = !!currentWeekOrder(a.id);
-    const bo = !!currentWeekOrder(b.id);
+    const ao = !!activeOrderFor(a.id);
+    const bo = !!activeOrderFor(b.id);
 
-    if (ao !== bo) return ao ? 1 : -1;
-
-    const ad = dueInfo(a);
-    const bd = dueInfo(b);
-
-    if (ad.due !== bd.due) return ad.due ? -1 : 1;
+    if (ao !== bo) {
+      return ao ? -1 : 1;
+    }
 
     return a.name.localeCompare(b.name);
   });
 
   sorted.forEach((product) => {
-    const info = dueInfo(product);
-    const weekOrder = currentWeekOrder(product.id);
+    const order = activeOrderFor(product.id);
 
     const row = document.createElement("div");
     row.className = "order-row";
 
-    const check = document.createElement("input");
-    check.type = "checkbox";
-    check.className = "check";
-    check.checked = !!weekOrder;
-    check.setAttribute(
-      "aria-label",
-      `Mark ${product.name} ordered`
-    );
-
     const body = document.createElement("div");
 
     const title = document.createElement("div");
-    title.className = `item-title${weekOrder ? " ordered" : ""}`;
+    title.className = "item-title";
     title.textContent = product.name;
 
-    const badge = document.createElement("span");
-    badge.className = `due ${info.status}`;
-    badge.textContent = weekOrder
-      ? `Ordered this week — Qty ${weekOrder.quantity}`
-      : info.label;
+    const status = document.createElement("span");
 
-    body.append(title, badge);
+    if (order) {
+      status.className = "due due-now";
+      status.textContent = "Active order";
+    } else {
+      status.className = "due not-due";
+      status.textContent = "Not on current order";
+    }
+
+    body.append(title, status);
 
     const controls = document.createElement("div");
     controls.className = "qty-controls";
 
-    const minus = document.createElement("button");
-    const qty = document.createElement("span");
-    const plus = document.createElement("button");
+    if (order) {
+      const minus = document.createElement("button");
+      const qty = document.createElement("span");
+      const plus = document.createElement("button");
 
-    minus.type = "button";
-    plus.type = "button";
+      minus.type = "button";
+      plus.type = "button";
 
-    minus.className = "mini";
-    plus.className = "mini";
+      minus.className = "mini";
+      plus.className = "mini";
 
-    minus.textContent = "−";
-    plus.textContent = "+";
+      minus.textContent = "−";
+      plus.textContent = "+";
 
-    let draftQty = weekOrder?.quantity || suggestedQty(product);
+      const currentQty = Math.max(
+        0,
+        Number(order.quantity) || 0
+      );
 
-    qty.className = "qty-pill";
-    qty.textContent = `Qty ${draftQty}`;
+      qty.className = "qty-pill";
+      qty.textContent = `Qty ${currentQty}`;
 
-    const setQty = (n) => {
-      draftQty = Math.max(1, Math.min(999, n));
-      qty.textContent = `Qty ${draftQty}`;
+      minus.addEventListener("click", async () => {
+        await changeOrderQty(
+          order,
+          Math.max(0, currentQty - 1)
+        );
+      });
 
-      if (weekOrder) {
-        updateOrder(weekOrder.id, {
-          quantity: draftQty,
-        });
-      }
-    };
+      plus.addEventListener("click", async () => {
+        await changeOrderQty(
+          order,
+          Math.min(999, currentQty + 1)
+        );
+      });
 
-    minus.addEventListener("click", () => {
-      setQty(draftQty - 1);
-    });
-
-    plus.addEventListener("click", () => {
-      setQty(draftQty + 1);
-    });
-
-    check.addEventListener("change", async () => {
-      if (check.checked) {
-        const { error } = await supabase
-          .from("orders")
-          .insert({
-            workspace_id: workspace.id,
-            product_id: product.id,
-            product_name: product.name,
-            quantity: draftQty,
-            ordered_on: localDateKey(),
-            ordered_by: session.user.id,
-          });
-
-        if (error) {
-          check.checked = false;
-          msg($("#appMessage"), error.message);
+      controls.append(minus, qty, plus);
+    } else {
+      const add = button(
+        "Add",
+        "mini",
+        async () => {
+          await addActiveOrder(product);
         }
-      } else if (weekOrder) {
-        await deleteOrder(weekOrder.id);
-      }
-    });
+      );
 
-    controls.append(minus, qty, plus);
-    row.append(check, body, controls);
+      controls.append(add);
+    }
+
+    row.append(body, controls);
     host.append(row);
   });
 }
 
-function renderProducts() {
-  const host = $("#productList");
-  host.innerHTML = "";
+function ensureCompleteOrderButton() {
+  const host = $("#weekList");
 
-  $("#productEmpty").classList.toggle(
-    "hidden",
-    products.length > 0
+  if (!host) return;
+
+  let btn = $("#completeOrderBtn");
+
+  if (!isSenior()) {
+    if (btn) btn.remove();
+    return;
+  }
+
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.id = "completeOrderBtn";
+    btn.type = "button";
+    btn.className = "primary";
+    btn.textContent = "Complete Order";
+
+    btn.addEventListener(
+      "click",
+      completeCurrentOrder
+    );
+
+    host.parentElement.insertBefore(btn, host);
+  }
+
+  btn.disabled = activeOrders().length === 0;
+}
+
+async function addActiveOrder(product) {
+  msg($("#appMessage"));
+
+  const alreadyActive = activeOrderFor(product.id);
+
+  if (alreadyActive) {
+    msg(
+      $("#appMessage"),
+      `${product.name} is already on the active order.`
+    );
+    return;
+  }
+
+  const qty = startingQty(product);
+
+  const { error } = await supabase
+    .from("orders")
+    .insert({
+      workspace_id: workspace.id,
+      product_id: product.id,
+      product_name: product.name,
+      quantity: qty,
+      ordered_on: localDateKey(),
+      ordered_by: session.user.id,
+      status: "active",
+    });
+
+  if (error) {
+    msg($("#appMessage"), error.message);
+    return;
+  }
+
+  await refreshAll();
+}
+
+async function changeOrderQty(order, quantity) {
+  const safeQty = Math.max(
+    0,
+    Math.min(999, Number(quantity) || 0)
   );
 
-  products.forEach((p) => {
-    const last = latestOrderFor(p.id);
-    const info = dueInfo(p);
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      quantity: safeQty,
+    })
+    .eq("id", order.id);
+
+  if (error) {
+    msg($("#appMessage"), error.message);
+    return;
+  }
+
+  await refreshAll();
+}
+
+async function completeCurrentOrder() {
+  if (!isSenior()) {
+    msg(
+      $("#appMessage"),
+      "Only a manager or owner can complete an order."
+    );
+    return;
+  }
+
+  const active = activeOrders();
+
+  if (!active.length) {
+    msg($("#appMessage"), "There is no active order.");
+    return;
+  }
+
+  const ok = window.confirm(
+    `Complete this order with ${active.length} product${active.length === 1 ? "" : "s"}?`
+  );
+
+  if (!ok) return;
+
+  const ids = active.map((o) => o.id);
+
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      completed_by: session.user.id,
+    })
+    .in("id", ids);
+
+  if (error) {
+    msg($("#appMessage"), error.message);
+    return;
+  }
+
+  msg(
+    $("#appMessage"),
+    "Order completed and moved to history."
+  );
+
+  await refreshAll();
+}
+
+function renderProducts() {
+  const host = $("#productList");
+
+  if (!host) return;
+
+  host.innerHTML = "";
+
+  if ($("#productEmpty")) {
+    $("#productEmpty").classList.toggle(
+      "hidden",
+      products.length > 0
+    );
+  }
+
+  products.forEach((product) => {
+    const active = activeOrderFor(product.id);
 
     const row = document.createElement("div");
     row.className = "product-row";
@@ -413,86 +525,113 @@ function renderProducts() {
 
     const title = document.createElement("div");
     title.className = "item-title";
-    title.textContent = p.name;
+    title.textContent = product.name;
 
     const meta = document.createElement("div");
     meta.className = "meta";
+
     meta.textContent =
-      `Every ${p.reorder_weeks} week${p.reorder_weeks === 1 ? "" : "s"}` +
-      ` • Usual qty ${p.default_quantity}` +
-      ` • Last ${
-        last
-          ? `${fmtDate(last.ordered_on)} / ${last.quantity}`
-          : "never ordered"
-      }`;
+      `Usual qty ${Number(product.default_quantity) || 1}` +
+      (active
+        ? ` • Current order qty ${Number(active.quantity) || 0}`
+        : "");
 
-    const badge = document.createElement("span");
-    badge.className = `due ${info.status}`;
-    badge.textContent = info.label;
-
-    body.append(title, meta, badge);
+    body.append(title, meta);
 
     const actions = document.createElement("div");
     actions.className = "product-actions";
 
-    const cycleDown = button(
-      "− week",
+    const edit = button(
+      "Edit",
       "mini",
-      () =>
-        updateProduct(p.id, {
-          reorder_weeks: Math.max(
-            1,
-            p.reorder_weeks - 1
-          ),
-        })
+      () => editProduct(product)
     );
 
-    const cycleUp = button(
-      "+ week",
-      "mini",
-      () =>
-        updateProduct(p.id, {
-          reorder_weeks: Math.min(
-            52,
-            p.reorder_weeks + 1
-          ),
-        })
-    );
+    actions.append(edit);
 
-    const remove = button(
-      "Archive",
-      "mini delete",
-      () =>
-        updateProduct(p.id, {
-          active: false,
-        })
-    );
-
-    actions.append(cycleDown, cycleUp, remove);
     row.append(body, actions);
     host.append(row);
   });
 }
 
+async function editProduct(product) {
+  const newName = window.prompt(
+    "Product name",
+    product.name
+  );
+
+  if (newName === null) return;
+
+  const cleanName = newName.trim();
+
+  if (!cleanName) {
+    msg(
+      $("#productMessage"),
+      "Product name cannot be empty."
+    );
+    return;
+  }
+
+  const qtyInput = window.prompt(
+    "Usual quantity",
+    String(product.default_quantity || 1)
+  );
+
+  if (qtyInput === null) return;
+
+  const defaultQuantity = Math.max(
+    1,
+    Math.min(999, Number(qtyInput) || 1)
+  );
+
+  const { error } = await supabase
+    .from("products")
+    .update({
+      name: cleanName,
+      default_quantity: defaultQuantity,
+    })
+    .eq("id", product.id);
+
+  if (error) {
+    msg($("#productMessage"), error.message);
+    return;
+  }
+
+  await refreshAll();
+}
+
 function button(text, cls, fn) {
   const b = document.createElement("button");
+
   b.type = "button";
   b.className = cls;
   b.textContent = text;
   b.addEventListener("click", fn);
+
   return b;
 }
 
 function renderHistory() {
   const host = $("#historyList");
+
+  if (!host) return;
+
   host.innerHTML = "";
 
-  $("#historyEmpty").classList.toggle(
-    "hidden",
-    orders.length > 0
+  const history = [...completedOrders()].sort(
+    (a, b) =>
+      new Date(b.completed_at || b.updated_at || b.created_at) -
+      new Date(a.completed_at || a.updated_at || a.created_at)
   );
 
-  orders.forEach((o) => {
+  if ($("#historyEmpty")) {
+    $("#historyEmpty").classList.toggle(
+      "hidden",
+      history.length > 0
+    );
+  }
+
+  history.forEach((o) => {
     const row = document.createElement("div");
     row.className = "history-row";
 
@@ -500,7 +639,10 @@ function renderHistory() {
 
     const date = document.createElement("div");
     date.className = "history-date";
-    date.textContent = fmtDate(o.ordered_on);
+
+    date.textContent = o.completed_at
+      ? fmtTimestamp(o.completed_at)
+      : fmtDate(o.ordered_on);
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -510,104 +652,80 @@ function renderHistory() {
 
     const qty = document.createElement("div");
     qty.className = "history-qty";
-    qty.textContent = `Qty ${o.quantity}`;
+    qty.textContent = `Qty ${Number(o.quantity) || 0}`;
 
     row.append(body, qty);
     host.append(row);
   });
 }
 
-async function updateProduct(id, patch) {
-  const { error } = await supabase
-    .from("products")
-    .update(patch)
-    .eq("id", id);
+$("#authForm").addEventListener(
+  "submit",
+  async (e) => {
+    e.preventDefault();
 
-  if (error) {
-    msg($("#appMessage"), error.message);
-  }
-}
+    if (!supabase) return;
 
-async function updateOrder(id, patch) {
-  const { error } = await supabase
-    .from("orders")
-    .update(patch)
-    .eq("id", id);
+    msg($("#authMessage"));
 
-  if (error) {
-    msg($("#appMessage"), error.message);
-  }
-}
+    const email = $("#email").value.trim();
+    const password = $("#password").value;
 
-async function deleteOrder(id) {
-  const { error } = await supabase
-    .from("orders")
-    .delete()
-    .eq("id", id);
+    const { data, error } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-  if (error) {
-    msg($("#appMessage"), error.message);
-  }
-}
+    if (error) {
+      msg($("#authMessage"), error.message);
+      return;
+    }
 
-$("#authForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-
-  if (!supabase) return;
-
-  msg($("#authMessage"));
-
-  const email = $("#email").value.trim();
-  const password = $("#password").value;
-
-  const { data, error } =
-    await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-  if (error) {
-    return msg($("#authMessage"), error.message);
-  }
-
-  session = data.session;
-
-  await loadWorkspace();
-});
-
-$("#signUpBtn").addEventListener("click", async () => {
-  if (!supabase) return;
-
-  const email = $("#email").value.trim();
-  const password = $("#password").value;
-
-  if (!email || password.length < 6) {
-    return msg(
-      $("#authMessage"),
-      "Enter an email and a password of at least 6 characters."
-    );
-  }
-
-  const { data, error } =
-    await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-  if (error) {
-    return msg($("#authMessage"), error.message);
-  }
-
-  if (!data.session) {
-    msg(
-      $("#authMessage"),
-      "Account created. Check your email if confirmation is enabled, then sign in."
-    );
-  } else {
     session = data.session;
+
     await loadWorkspace();
   }
-});
+);
+
+$("#signUpBtn").addEventListener(
+  "click",
+  async () => {
+    if (!supabase) return;
+
+    const email = $("#email").value.trim();
+    const password = $("#password").value;
+
+    if (!email || password.length < 6) {
+      msg(
+        $("#authMessage"),
+        "Enter an email and a password of at least 6 characters."
+      );
+      return;
+    }
+
+    const { data, error } =
+      await supabase.auth.signUp({
+        email,
+        password,
+      });
+
+    if (error) {
+      msg($("#authMessage"), error.message);
+      return;
+    }
+
+    if (!data.session) {
+      msg(
+        $("#authMessage"),
+        "Account created. Check your email if confirmation is enabled, then sign in."
+      );
+    } else {
+      session = data.session;
+      await loadWorkspace();
+    }
+  }
+);
 
 $("#createWorkspaceForm").addEventListener(
   "submit",
@@ -624,10 +742,8 @@ $("#createWorkspaceForm").addEventListener(
     );
 
     if (error) {
-      return msg(
-        $("#workspaceMessage"),
-        error.message
-      );
+      msg($("#workspaceMessage"), error.message);
+      return;
     }
 
     await loadWorkspace();
@@ -651,10 +767,8 @@ $("#joinWorkspaceForm").addEventListener(
     );
 
     if (error) {
-      return msg(
-        $("#workspaceMessage"),
-        error.message
-      );
+      msg($("#workspaceMessage"), error.message);
+      return;
     }
 
     await loadWorkspace();
@@ -666,17 +780,19 @@ $("#productForm").addEventListener(
   async (e) => {
     e.preventDefault();
 
+    msg($("#productMessage"));
+
     const name = $("#productName").value.trim();
 
-    const reorder_weeks = Math.max(
-      1,
-      Math.min(
-        52,
-        Number($("#reorderWeeks").value) || 1
-      )
-    );
+    if (!name) {
+      msg(
+        $("#productMessage"),
+        "Enter a product name."
+      );
+      return;
+    }
 
-    const default_quantity = Math.max(
+    const defaultQuantity = Math.max(
       1,
       Math.min(
         999,
@@ -684,26 +800,39 @@ $("#productForm").addEventListener(
       )
     );
 
+    const duplicate = products.find(
+      (p) =>
+        p.name.trim().toLowerCase() ===
+        name.toLowerCase()
+    );
+
+    if (duplicate) {
+      msg(
+        $("#productMessage"),
+        "This product already exists."
+      );
+      return;
+    }
+
     const { error } = await supabase
       .from("products")
       .insert({
         workspace_id: workspace.id,
         name,
-        reorder_weeks,
-        default_quantity,
+        default_quantity: defaultQuantity,
         created_by: session.user.id,
       });
 
     if (error) {
-      return msg(
-        $("#productMessage"),
-        error.message
-      );
+      msg($("#productMessage"), error.message);
+      return;
     }
 
     $("#productName").value = "";
     $("#defaultQty").value = "1";
     $("#productName").focus();
+
+    await refreshAll();
   }
 );
 
@@ -711,40 +840,59 @@ $("#demoBtn").addEventListener(
   "click",
   async () => {
     const demo = [
-      ["Coca-Cola 20oz", 1, 4],
-      ["Sprite 20oz", 1, 2],
-      ["Diet Coke 20oz", 2, 1],
-      ["Red Bull 12oz", 1, 2],
-      ["Monster Original", 2, 2],
-      ["Monster Mango", 3, 1],
+      ["Coca-Cola 20oz", 4],
+      ["Sprite 20oz", 2],
+      ["Diet Coke 20oz", 1],
+      ["Red Bull 12oz", 2],
+      ["Monster Original", 2],
+      ["Monster Mango", 1],
     ];
 
-    const rows = demo.map(
-      ([name, reorder_weeks, default_quantity]) => ({
+    const existingNames = new Set(
+      products.map((p) =>
+        p.name.trim().toLowerCase()
+      )
+    );
+
+    const rows = demo
+      .filter(
+        ([name]) =>
+          !existingNames.has(
+            name.toLowerCase()
+          )
+      )
+      .map(([name, default_quantity]) => ({
         workspace_id: workspace.id,
         name,
-        reorder_weeks,
         default_quantity,
         created_by: session.user.id,
-      })
-    );
+      }));
+
+    if (!rows.length) {
+      msg(
+        $("#productMessage"),
+        "Example products already exist."
+      );
+      return;
+    }
 
     const { error } = await supabase
       .from("products")
       .insert(rows);
 
     if (error) {
-      msg(
-        $("#productMessage"),
-        error.message
-      );
+      msg($("#productMessage"), error.message);
+      return;
     }
+
+    await refreshAll();
   }
 );
 
 $$(".main-tab").forEach((btn) =>
-  btn.addEventListener("click", () =>
-    showMain(btn.dataset.screen)
+  btn.addEventListener(
+    "click",
+    () => showMain(btn.dataset.screen)
   )
 );
 
@@ -791,6 +939,7 @@ async function signOut() {
 
   session = null;
   workspace = null;
+  memberRole = "staff";
   products = [];
   orders = [];
 
