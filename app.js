@@ -22,15 +22,28 @@ const app = $("#app");
 let session = null;
 let workspace = null;
 let memberRole = "staff";
+
 let products = [];
 let orders = [];
 let channel = null;
 
 /*
-  Stores which ACTIVE order rows are checked
-  for "Complete Selected".
+  Product quantity being edited on Products tab.
+
+  IMPORTANT:
+  Changing +/- does NOT immediately change Current Order.
+  User must press Done.
+*/
+const draftQty = new Map();
+
+/*
+  Current Order checkboxes selected for completion.
 */
 const selectedOrderIds = new Set();
+
+/* =====================================================
+   BASIC HELPERS
+===================================================== */
 
 function localDateKey(d = new Date()) {
   return `${d.getFullYear()}-${String(
@@ -51,39 +64,20 @@ function parseDateKey(k) {
 function fmtDate(k) {
   if (!k) return "";
 
-  return parseDateKey(k).toLocaleDateString(
-    "en-US",
-    {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }
-  );
+  return parseDateKey(k).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function fmtTime(value) {
   if (!value) return "";
 
-  return new Date(value).toLocaleTimeString(
-    "en-US",
-    {
-      hour: "numeric",
-      minute: "2-digit",
-    }
-  );
-}
-
-function historyDateKey(order) {
-  const value =
-    order.completed_at ||
-    order.updated_at ||
-    order.created_at;
-
-  if (!value) {
-    return order.ordered_on || localDateKey();
-  }
-
-  return localDateKey(new Date(value));
+  return new Date(value).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function msg(el, text = "") {
@@ -134,6 +128,10 @@ if (!configured) {
     "Add your Supabase URL and publishable key in config.js first."
   );
 }
+
+/* =====================================================
+   AUTH / STARTUP
+===================================================== */
 
 async function bootstrap() {
   if (!supabase) {
@@ -193,7 +191,16 @@ async function loadWorkspace() {
   await refreshAll();
 
   subscribeRealtime();
+
+  /*
+    PRODUCTS IS THE HOME PAGE.
+  */
+  showMain("products");
 }
+
+/* =====================================================
+   DATABASE LOAD
+===================================================== */
 
 async function refreshAll() {
   if (!workspace) return;
@@ -236,9 +243,8 @@ async function refreshAll() {
   }
 
   /*
-    If an item disappeared because it was
-    completed/deleted, remove its checkbox
-    selection too.
+    Remove checkbox selections belonging
+    to orders that are no longer active.
   */
   const activeIds = new Set(
     activeOrders().map((o) => o.id)
@@ -247,6 +253,30 @@ async function refreshAll() {
   [...selectedOrderIds].forEach((id) => {
     if (!activeIds.has(id)) {
       selectedOrderIds.delete(id);
+    }
+  });
+
+  /*
+    Do NOT overwrite a quantity currently
+    being edited in Products tab.
+
+    But initialize drafts for products that
+    do not yet have one.
+  */
+  products.forEach((product) => {
+    if (!draftQty.has(product.id)) {
+      const active =
+        activeOrderFor(product.id);
+
+      draftQty.set(
+        product.id,
+        active
+          ? Math.max(
+              0,
+              Number(active.quantity) || 0
+            )
+          : 0
+      );
     }
   });
 
@@ -285,9 +315,9 @@ function subscribeRealtime() {
     .subscribe();
 }
 
-/* =========================
+/* =====================================================
    ORDER HELPERS
-========================= */
+===================================================== */
 
 function activeOrders() {
   return orders.filter(
@@ -319,51 +349,37 @@ function productFor(productId) {
   );
 }
 
-function startingQty(product) {
-  return Math.max(
-    0,
-    Math.min(
-      999,
-      Number(product.default_quantity) || 1
-    )
-  );
-}
-
-/* =========================
-   RENDER EVERYTHING
-========================= */
+/* =====================================================
+   RENDER ALL
+===================================================== */
 
 function renderAll() {
   renderStats();
-  renderWeek();
+  renderCurrentOrders();
   renderProducts();
   renderHistory();
 }
 
-/* =========================
-   TOP COUNTERS
-========================= */
+/* =====================================================
+   COUNTERS
+===================================================== */
 
 function renderStats() {
   const active = activeOrders();
 
-  /*
-    Qty 0 products remain on Current Order,
-    but they do NOT count as "Items on order".
-  */
-  const positiveOrders = active.filter(
+  const positive = active.filter(
     (o) =>
       (Number(o.quantity) || 0) > 0
   );
 
   if ($("#dueCount")) {
     $("#dueCount").textContent =
-      positiveOrders.length;
+      positive.length;
   }
 
   if ($("#weekOrderedCount")) {
     $("#weekOrderedCount").textContent =
-      positiveOrders.reduce(
+      positive.reduce(
         (sum, o) =>
           sum +
           Math.max(
@@ -380,52 +396,63 @@ function renderStats() {
   }
 }
 
-/* =========================
-   CURRENT ORDER
-========================= */
+/* =====================================================
+   CURRENT ORDERS TAB
 
-function renderWeek() {
+   REVIEW ONLY.
+   NO +/- HERE.
+===================================================== */
+
+function renderCurrentOrders() {
   const host = $("#weekList");
 
   if (!host) return;
 
   host.innerHTML = "";
 
-  const active = activeOrders();
+  const active = [...activeOrders()].sort(
+    (a, b) =>
+      String(
+        a.product_name || ""
+      ).localeCompare(
+        String(b.product_name || "")
+      )
+  );
 
   ensureCompleteSelectedButton();
 
-  /*
-    Current Order empty message is based on
-    ACTIVE ORDERS — not number of products.
-  */
   if ($("#weekEmpty")) {
     $("#weekEmpty").classList.toggle(
       "hidden",
       active.length > 0
     );
+
+    const emptyTitle =
+      $("#weekEmpty h3");
+
+    const emptyText =
+      $("#weekEmpty p");
+
+    if (emptyTitle) {
+      emptyTitle.textContent =
+        "No items in current order";
+    }
+
+    if (emptyText) {
+      emptyText.textContent =
+        "Go to Products to build the current order.";
+    }
   }
 
-  /*
-    IMPORTANT:
-    Current Order shows ONLY active order items.
-    Products not added to order are NOT rendered.
-  */
-  const sorted = [...active].sort(
-    (a, b) =>
-      String(a.product_name || "").localeCompare(
-        String(b.product_name || "")
-      )
-  );
-
-  sorted.forEach((order) => {
+  active.forEach((order) => {
     const row =
       document.createElement("div");
 
     row.className = "order-row";
 
-    /* Checkbox */
-
+    /*
+      Checkbox first
+    */
     const check =
       document.createElement("input");
 
@@ -453,8 +480,9 @@ function renderWeek() {
       }
     );
 
-    /* Product info */
-
+    /*
+      Product name + quantity
+    */
     const body =
       document.createElement("div");
 
@@ -465,97 +493,49 @@ function renderWeek() {
     title.textContent =
       order.product_name;
 
-    const status =
-      document.createElement("span");
-
-    status.className = "due due-now";
-    status.textContent = "Active order";
-
-    body.append(title, status);
-
-    /* Quantity controls */
-
-    const controls =
+    const meta =
       document.createElement("div");
 
-    controls.className = "qty-controls";
+    meta.className = "meta";
+    meta.textContent =
+      `Qty ${Math.max(
+        0,
+        Number(order.quantity) || 0
+      )}`;
 
-    const minus =
-      document.createElement("button");
-
-    const qty =
-      document.createElement("span");
-
-    const plus =
-      document.createElement("button");
-
-    minus.type = "button";
-    plus.type = "button";
-
-    minus.className = "mini";
-    plus.className = "mini";
-
-    minus.textContent = "−";
-    plus.textContent = "+";
-
-    const currentQty = Math.max(
-      0,
-      Number(order.quantity) || 0
+    body.append(
+      title,
+      meta
     );
 
-    qty.className = "qty-pill";
-    qty.textContent =
-      `Qty ${currentQty}`;
-
-    minus.addEventListener(
-      "click",
-      async () => {
-        await changeOrderQty(
-          order,
-          Math.max(
-            0,
-            currentQty - 1
-          )
-        );
-      }
-    );
-
-    plus.addEventListener(
-      "click",
-      async () => {
-        await changeOrderQty(
-          order,
-          Math.min(
-            999,
-            currentQty + 1
-          )
-        );
-      }
-    );
-
-    controls.append(
-      minus,
-      qty,
-      plus
-    );
-
+    /*
+      No quantity buttons in Current Orders.
+    */
     row.append(
       check,
-      body,
-      controls
+      body
     );
 
     host.append(row);
   });
 }
 
+/* =====================================================
+   COMPLETE SELECTED BUTTON
+===================================================== */
+
 function ensureCompleteSelectedButton() {
   const host = $("#weekList");
 
   if (!host) return;
 
-  let btn = $("#completeOrderBtn");
+  let btn =
+    $("#completeOrderBtn");
 
+  /*
+    Keeping current role behavior for now.
+    Hierarchy itself comes later.
+  */
   if (!isSenior()) {
     if (btn) {
       btn.remove();
@@ -568,7 +548,9 @@ function ensureCompleteSelectedButton() {
     btn =
       document.createElement("button");
 
-    btn.id = "completeOrderBtn";
+    btn.id =
+      "completeOrderBtn";
+
     btn.type = "button";
     btn.className = "primary";
 
@@ -583,21 +565,20 @@ function ensureCompleteSelectedButton() {
     );
   }
 
-  btn.textContent =
-    "Complete Selected";
-
   updateCompleteSelectedButton();
 }
 
 function updateCompleteSelectedButton() {
-  const btn = $("#completeOrderBtn");
+  const btn =
+    $("#completeOrderBtn");
 
   if (!btn) return;
 
   const count =
     selectedOrderIds.size;
 
-  btn.disabled = count === 0;
+  btn.disabled =
+    count === 0;
 
   btn.textContent =
     count > 0
@@ -605,42 +586,399 @@ function updateCompleteSelectedButton() {
       : "Complete Selected";
 }
 
-/* =========================
-   ADD PRODUCT TO ORDER
-========================= */
+/* =====================================================
+   PRODUCTS TAB
 
-async function addActiveOrder(product) {
+   THIS IS THE MAIN WORK SCREEN.
+===================================================== */
+
+function renderProducts() {
+  const host =
+    $("#productList");
+
+  if (!host) return;
+
+  host.innerHTML = "";
+
+  /*
+    If user types something in Product box,
+    filter the Store Products list.
+  */
+  const searchText =
+    ($("#productName")?.value || "")
+      .trim()
+      .toLowerCase();
+
+  const visibleProducts =
+    searchText
+      ? products.filter((p) =>
+          p.name
+            .toLowerCase()
+            .includes(searchText)
+        )
+      : products;
+
+  if ($("#productEmpty")) {
+    $("#productEmpty").classList.toggle(
+      "hidden",
+      visibleProducts.length > 0
+    );
+
+    if (
+      !visibleProducts.length &&
+      searchText
+    ) {
+      $("#productEmpty").textContent =
+        "No matching product found.";
+    } else {
+      $("#productEmpty").textContent =
+        "No products added yet.";
+    }
+  }
+
+  visibleProducts.forEach(
+    (product) => {
+      const active =
+        activeOrderFor(product.id);
+
+      /*
+        If another user changed this item
+        after our local draft was already
+        confirmed, reset draft to current
+        database qty whenever it is not dirty.
+      */
+      if (!draftQty.has(product.id)) {
+        draftQty.set(
+          product.id,
+          active
+            ? Math.max(
+                0,
+                Number(active.quantity) || 0
+              )
+            : 0
+        );
+      }
+
+      const row =
+        document.createElement("div");
+
+      row.className =
+        "product-row";
+
+      const body =
+        document.createElement("div");
+
+      const title =
+        document.createElement("div");
+
+      title.className =
+        "item-title";
+
+      title.textContent =
+        product.name;
+
+      const meta =
+        document.createElement("div");
+
+      meta.className = "meta";
+
+      meta.textContent =
+        active
+          ? `Current order qty ${Math.max(
+              0,
+              Number(active.quantity) || 0
+            )}`
+          : "Not on current order";
+
+      body.append(
+        title,
+        meta
+      );
+
+      /*
+        Quantity editing controls
+      */
+      const actions =
+        document.createElement("div");
+
+      actions.className =
+        "product-actions";
+
+      const qtyControls =
+        document.createElement("div");
+
+      qtyControls.className =
+        "qty-controls";
+
+      const minus =
+        document.createElement("button");
+
+      const qty =
+        document.createElement("span");
+
+      const plus =
+        document.createElement("button");
+
+      minus.type = "button";
+      plus.type = "button";
+
+      minus.className = "mini";
+      plus.className = "mini";
+
+      minus.textContent = "−";
+      plus.textContent = "+";
+
+      const currentDraft =
+        Math.max(
+          0,
+          Number(
+            draftQty.get(product.id)
+          ) || 0
+        );
+
+      qty.className = "qty-pill";
+      qty.textContent =
+        `Qty ${currentDraft}`;
+
+      minus.addEventListener(
+        "click",
+        () => {
+          const n =
+            Math.max(
+              0,
+              (Number(
+                draftQty.get(
+                  product.id
+                )
+              ) || 0) - 1
+            );
+
+          draftQty.set(
+            product.id,
+            n
+          );
+
+          renderProducts();
+        }
+      );
+
+      plus.addEventListener(
+        "click",
+        () => {
+          const n =
+            Math.min(
+              999,
+              (Number(
+                draftQty.get(
+                  product.id
+                )
+              ) || 0) + 1
+            );
+
+          draftQty.set(
+            product.id,
+            n
+          );
+
+          renderProducts();
+        }
+      );
+
+      qtyControls.append(
+        minus,
+        qty,
+        plus
+      );
+
+      /*
+        DONE confirms this quantity into
+        Current Orders.
+
+        If current order already exists,
+        Done updates it instead of creating
+        duplicate.
+      */
+      const done = button(
+        "Done",
+        "primary",
+        async () => {
+          await confirmProductOrder(
+            product
+          );
+        }
+      );
+
+      /*
+        New item must be at least Qty 1.
+
+        Existing current order may be
+        confirmed at Qty 0 if user wants
+        to keep it pending.
+      */
+      if (
+        !active &&
+        currentDraft === 0
+      ) {
+        done.disabled = true;
+      }
+
+      const edit = button(
+        "Edit",
+        "mini",
+        () =>
+          editProduct(product)
+      );
+
+      const remove = button(
+        "Delete",
+        "mini delete",
+        () =>
+          deleteProduct(product)
+      );
+
+      actions.append(
+        qtyControls,
+        done,
+        edit,
+        remove
+      );
+
+      row.append(
+        body,
+        actions
+      );
+
+      host.append(row);
+    }
+  );
+}
+
+/* =====================================================
+   PRODUCT SEARCH
+
+   As user types ZYN / Marlboro / etc,
+   matching Store Products immediately show.
+===================================================== */
+
+if ($("#productName")) {
+  $("#productName").addEventListener(
+    "input",
+    () => {
+      renderProducts();
+    }
+  );
+}
+
+/* =====================================================
+   DONE / CONFIRM PRODUCT QUANTITY
+===================================================== */
+
+async function confirmProductOrder(product) {
+  msg($("#productMessage"));
   msg($("#appMessage"));
 
-  const alreadyActive =
+  const quantity =
+    Math.max(
+      0,
+      Math.min(
+        999,
+        Number(
+          draftQty.get(product.id)
+        ) || 0
+      )
+    );
+
+  const active =
     activeOrderFor(product.id);
 
-  if (alreadyActive) {
+  /*
+    Existing Current Order:
+    update its quantity.
+  */
+  if (active) {
+    const { error } =
+      await supabase
+        .from("orders")
+        .update({
+          quantity,
+          product_name:
+            product.name,
+        })
+        .eq("id", active.id);
+
+    if (error) {
+      msg(
+        $("#productMessage"),
+        error.message
+      );
+
+      return;
+    }
+
     msg(
-      $("#appMessage"),
-      `${product.name} is already on the current order.`
+      $("#productMessage"),
+      `${product.name} current order updated to Qty ${quantity}.`
+    );
+
+    /*
+      Reset local draft to exactly
+      what was confirmed.
+    */
+    draftQty.set(
+      product.id,
+      quantity
+    );
+
+    await refreshAll();
+
+    /*
+      Stay on Products.
+    */
+    showMain("products");
+
+    return;
+  }
+
+  /*
+    New Current Order cannot start at zero.
+  */
+  if (quantity <= 0) {
+    msg(
+      $("#productMessage"),
+      "Set the quantity before pressing Done."
     );
 
     return;
   }
 
-  const qty = startingQty(product);
+  const { error } =
+    await supabase
+      .from("orders")
+      .insert({
+        workspace_id:
+          workspace.id,
 
-  const { error } = await supabase
-    .from("orders")
-    .insert({
-      workspace_id: workspace.id,
-      product_id: product.id,
-      product_name: product.name,
-      quantity: qty,
-      ordered_on: localDateKey(),
-      ordered_by: session.user.id,
-      status: "active",
-    });
+        product_id:
+          product.id,
+
+        product_name:
+          product.name,
+
+        quantity,
+
+        ordered_on:
+          localDateKey(),
+
+        ordered_by:
+          session.user.id,
+
+        status:
+          "active",
+      });
 
   if (error) {
     msg(
-      $("#appMessage"),
+      $("#productMessage"),
       error.message
     );
 
@@ -648,51 +986,29 @@ async function addActiveOrder(product) {
   }
 
   msg(
-    $("#appMessage"),
-    `${product.name} added to current order.`
+    $("#productMessage"),
+    `${product.name} added to Current Orders — Qty ${quantity}.`
+  );
+
+  draftQty.set(
+    product.id,
+    quantity
   );
 
   await refreshAll();
+
+  /*
+    User remains on Products page
+    to make another order.
+  */
+  showMain("products");
 }
 
-/* =========================
-   CHANGE ORDER QUANTITY
-========================= */
+/* =====================================================
+   COMPLETE SELECTED
 
-async function changeOrderQty(
-  order,
-  quantity
-) {
-  const safeQty = Math.max(
-    0,
-    Math.min(
-      999,
-      Number(quantity) || 0
-    )
-  );
-
-  const { error } = await supabase
-    .from("orders")
-    .update({
-      quantity: safeQty,
-    })
-    .eq("id", order.id);
-
-  if (error) {
-    msg(
-      $("#appMessage"),
-      error.message
-    );
-
-    return;
-  }
-
-  await refreshAll();
-}
-
-/* =========================
-   COMPLETE SELECTED ONLY
-========================= */
+   ONE CLICK = ONE HISTORY BATCH
+===================================================== */
 
 async function completeSelectedOrders() {
   if (!isSenior()) {
@@ -704,45 +1020,76 @@ async function completeSelectedOrders() {
     return;
   }
 
-  const active = activeOrders();
-
-  const selected = active.filter(
-    (o) =>
-      selectedOrderIds.has(o.id)
-  );
+  const selected =
+    activeOrders().filter(
+      (o) =>
+        selectedOrderIds.has(
+          o.id
+        )
+    );
 
   if (!selected.length) {
     msg(
       $("#appMessage"),
-      "Select at least one item to complete."
+      "Select at least one item."
     );
 
     return;
   }
 
-  const ok = window.confirm(
-    `Complete ${selected.length} selected item${
-      selected.length === 1
-        ? ""
-        : "s"
-    }?`
-  );
+  const totalQty =
+    selected.reduce(
+      (sum, o) =>
+        sum +
+        Math.max(
+          0,
+          Number(o.quantity) || 0
+        ),
+      0
+    );
+
+  const ok =
+    window.confirm(
+      `Complete ${selected.length} product${
+        selected.length === 1
+          ? ""
+          : "s"
+      } with total quantity ${totalQty}?`
+    );
 
   if (!ok) return;
 
-  const ids =
-    selected.map((o) => o.id);
+  /*
+    Every item completed in THIS click
+    receives the SAME batch ID.
+  */
+  const batchId =
+    crypto.randomUUID();
 
-  const { error } = await supabase
-    .from("orders")
-    .update({
-      status: "completed",
-      completed_at:
-        new Date().toISOString(),
-      completed_by:
-        session.user.id,
-    })
-    .in("id", ids);
+  const completedAt =
+    new Date().toISOString();
+
+  const ids =
+    selected.map(
+      (o) => o.id
+    );
+
+  const { error } =
+    await supabase
+      .from("orders")
+      .update({
+        status: "completed",
+
+        completed_at:
+          completedAt,
+
+        completed_by:
+          session.user.id,
+
+        completion_batch_id:
+          batchId,
+      })
+      .in("id", ids);
 
   if (error) {
     msg(
@@ -753,148 +1100,49 @@ async function completeSelectedOrders() {
     return;
   }
 
-  ids.forEach((id) =>
-    selectedOrderIds.delete(id)
-  );
+  /*
+    Reset product drafts for items
+    that just left Current Order.
+  */
+  selected.forEach((order) => {
+    selectedOrderIds.delete(
+      order.id
+    );
+
+    draftQty.set(
+      order.product_id,
+      0
+    );
+  });
 
   msg(
     $("#appMessage"),
-    `${selected.length} selected item${
+    `Order completed: ${selected.length} product${
       selected.length === 1
         ? ""
         : "s"
-    } moved to history.`
+    }, ${totalQty} total quantity.`
   );
 
   await refreshAll();
+
+  showMain("week");
 }
 
-/* =========================
-   PRODUCTS TAB
-========================= */
-
-function renderProducts() {
-  const host = $("#productList");
-
-  if (!host) return;
-
-  host.innerHTML = "";
-
-  if ($("#productEmpty")) {
-    $("#productEmpty").classList.toggle(
-      "hidden",
-      products.length > 0
-    );
-  }
-
-  products.forEach((product) => {
-    const active =
-      activeOrderFor(product.id);
-
-    const row =
-      document.createElement("div");
-
-    row.className = "product-row";
-
-    const body =
-      document.createElement("div");
-
-    const title =
-      document.createElement("div");
-
-    title.className = "item-title";
-    title.textContent =
-      product.name;
-
-    const meta =
-      document.createElement("div");
-
-    meta.className = "meta";
-
-    meta.textContent =
-      `Usual qty ${
-        Number(
-          product.default_quantity
-        ) || 1
-      }` +
-      (active
-        ? ` • Current order qty ${
-            Number(active.quantity) || 0
-          }`
-        : "");
-
-    body.append(title, meta);
-
-    const actions =
-      document.createElement("div");
-
-    actions.className =
-      "product-actions";
-
-    /*
-      Products tab is where items are added
-      to the Current Order.
-    */
-    if (!active) {
-      const add = button(
-        "Add",
-        "mini",
-        async () => {
-          await addActiveOrder(product);
-        }
-      );
-
-      actions.append(add);
-    } else {
-      const onOrder =
-        document.createElement("span");
-
-      onOrder.className =
-        "due due-now";
-
-      onOrder.textContent =
-        "On current order";
-
-      actions.append(onOrder);
-    }
-
-    const edit = button(
-      "Edit",
-      "mini",
-      () => editProduct(product)
-    );
-
-    const remove = button(
-      "Delete",
-      "mini delete",
-      () => deleteProduct(product)
-    );
-
-    actions.append(
-      edit,
-      remove
-    );
-
-    row.append(
-      body,
-      actions
-    );
-
-    host.append(row);
-  });
-}
-
-/* =========================
+/* =====================================================
    EDIT PRODUCT
-========================= */
+===================================================== */
 
 async function editProduct(product) {
-  const newName = window.prompt(
-    "Product name",
-    product.name
-  );
+  const newName =
+    window.prompt(
+      "Product name",
+      product.name
+    );
 
-  if (newName === null) return;
+  if (newName === null) {
+    return;
+  }
 
   const cleanName =
     newName.trim();
@@ -927,33 +1175,17 @@ async function editProduct(product) {
     return;
   }
 
-  const qtyInput =
-    window.prompt(
-      "Usual quantity",
-      String(
-        product.default_quantity || 1
-      )
-    );
-
-  if (qtyInput === null) return;
-
-  const defaultQuantity =
-    Math.max(
-      1,
-      Math.min(
-        999,
-        Number(qtyInput) || 1
-      )
-    );
-
-  const { error } = await supabase
-    .from("products")
-    .update({
-      name: cleanName,
-      default_quantity:
-        defaultQuantity,
-    })
-    .eq("id", product.id);
+  const { error } =
+    await supabase
+      .from("products")
+      .update({
+        name:
+          cleanName,
+      })
+      .eq(
+        "id",
+        product.id
+      );
 
   if (error) {
     msg(
@@ -965,19 +1197,35 @@ async function editProduct(product) {
   }
 
   /*
-    If currently on active order, also update
-    the copied display name there.
+    If product is currently pending,
+    update its current display name too.
+
+    Old completed history stays unchanged.
   */
   const active =
     activeOrderFor(product.id);
 
   if (active) {
-    await supabase
-      .from("orders")
-      .update({
-        product_name: cleanName,
-      })
-      .eq("id", active.id);
+    const { error: activeError } =
+      await supabase
+        .from("orders")
+        .update({
+          product_name:
+            cleanName,
+        })
+        .eq(
+          "id",
+          active.id
+        );
+
+    if (activeError) {
+      msg(
+        $("#productMessage"),
+        activeError.message
+      );
+
+      return;
+    }
   }
 
   msg(
@@ -988,45 +1236,47 @@ async function editProduct(product) {
   await refreshAll();
 }
 
-/* =========================
+/* =====================================================
    DELETE PRODUCT
-========================= */
+
+   OLD HISTORY IS PRESERVED.
+===================================================== */
 
 async function deleteProduct(product) {
-  const ok = window.confirm(
-    `Permanently delete ${product.name}?`
-  );
-
-  if (!ok) return;
-
   const active =
     activeOrderFor(product.id);
 
+  let text =
+    `Permanently delete ${product.name} from Store Products?`;
+
+  if (active) {
+    text +=
+      "\n\nThis product is also on Current Orders and will be removed from there.";
+  }
+
+  const ok =
+    window.confirm(text);
+
+  if (!ok) return;
+
   /*
-    If product is currently on the order,
-    ask separately before removing that
-    active row.
+    Remove current pending order first,
+    if one exists.
   */
   if (active) {
-    const removeActive =
-      window.confirm(
-        `${product.name} is currently on the active order. Delete it from the current order too?`
-      );
-
-    if (!removeActive) {
-      return;
-    }
-
-    const { error: activeError } =
+    const { error: orderError } =
       await supabase
         .from("orders")
         .delete()
-        .eq("id", active.id);
+        .eq(
+          "id",
+          active.id
+        );
 
-    if (activeError) {
+    if (orderError) {
       msg(
         $("#productMessage"),
-        activeError.message
+        orderError.message
       );
 
       return;
@@ -1038,21 +1288,21 @@ async function deleteProduct(product) {
   }
 
   /*
-    First try real database deletion.
-    Completed history stores product_name,
-    quantity and completion details separately.
+    Try physical delete.
   */
-  const { error } = await supabase
-    .from("products")
-    .delete()
-    .eq("id", product.id);
+  const { error } =
+    await supabase
+      .from("products")
+      .delete()
+      .eq(
+        "id",
+        product.id
+      );
 
   if (error) {
     /*
-      Some databases may have a foreign-key
-      rule preventing physical deletion.
-      If that happens, hide it from the master
-      list instead while preserving history.
+      If FK prevents physical deletion,
+      hide/retire product instead.
     */
     const { error: softError } =
       await supabase
@@ -1060,57 +1310,44 @@ async function deleteProduct(product) {
         .update({
           active: false,
         })
-        .eq("id", product.id);
+        .eq(
+          "id",
+          product.id
+        );
 
     if (softError) {
       msg(
         $("#productMessage"),
-        error.message
+        softError.message
       );
 
       return;
     }
   }
 
+  draftQty.delete(
+    product.id
+  );
+
   msg(
     $("#productMessage"),
-    `${product.name} deleted.`
+    `${product.name} deleted from Store Products.`
   );
 
   await refreshAll();
 }
 
-/* =========================
-   GENERIC BUTTON
-========================= */
-
-function button(
-  text,
-  cls,
-  fn
-) {
-  const b =
-    document.createElement("button");
-
-  b.type = "button";
-  b.className = cls;
-  b.textContent = text;
-
-  b.addEventListener(
-    "click",
-    fn
-  );
-
-  return b;
-}
-
-/* =========================
+/* =====================================================
    HISTORY
-   COLLAPSIBLE BY DATE
-========================= */
+
+   DATE
+     -> COMPLETION BATCH
+       -> PRODUCTS
+===================================================== */
 
 function renderHistory() {
-  const host = $("#historyList");
+  const host =
+    $("#historyList");
 
   if (!host) return;
 
@@ -1118,23 +1355,17 @@ function renderHistory() {
 
   const history =
     [...completedOrders()].sort(
-      (a, b) => {
-        const aTime =
-          new Date(
-            a.completed_at ||
-              a.updated_at ||
-              a.created_at
-          ).getTime();
-
-        const bTime =
-          new Date(
-            b.completed_at ||
-              b.updated_at ||
-              b.created_at
-          ).getTime();
-
-        return bTime - aTime;
-      }
+      (a, b) =>
+        new Date(
+          b.completed_at ||
+            b.updated_at ||
+            b.created_at
+        ) -
+        new Date(
+          a.completed_at ||
+            a.updated_at ||
+            a.created_at
+        )
     );
 
   if ($("#historyEmpty")) {
@@ -1149,137 +1380,285 @@ function renderHistory() {
   }
 
   /*
-    Group all completed orders
-    by local calendar date.
+    First group by completed local DATE.
   */
-  const groups = new Map();
+  const dateGroups =
+    new Map();
 
   history.forEach((order) => {
-    const key =
-      historyDateKey(order);
+    const completedValue =
+      order.completed_at ||
+      order.updated_at ||
+      order.created_at;
 
-    if (!groups.has(key)) {
-      groups.set(key, []);
+    const dateKey =
+      completedValue
+        ? localDateKey(
+            new Date(
+              completedValue
+            )
+          )
+        : order.ordered_on;
+
+    if (!dateGroups.has(dateKey)) {
+      dateGroups.set(
+        dateKey,
+        []
+      );
     }
 
-    groups.get(key).push(order);
+    dateGroups
+      .get(dateKey)
+      .push(order);
   });
 
-  /*
-    Newest date first.
-  */
-  const sortedDates =
-    [...groups.keys()].sort(
+  const dates =
+    [...dateGroups.keys()].sort(
       (a, b) =>
         parseDateKey(b) -
         parseDateKey(a)
     );
 
-  sortedDates.forEach(
+  dates.forEach(
     (dateKey) => {
-      const items =
-        groups.get(dateKey);
+      const dateOrders =
+        dateGroups.get(dateKey);
 
-      const folder =
+      /*
+        Outer collapsible DATE folder
+      */
+      const dayFolder =
         document.createElement(
           "details"
         );
 
-      folder.className =
+      dayFolder.className =
         "history-day";
 
-      const summary =
+      const daySummary =
         document.createElement(
           "summary"
         );
 
-      summary.className =
+      daySummary.className =
         "history-day-summary";
 
-      summary.textContent =
-        `${fmtDate(dateKey)} — ${
-          items.length
-        } item${
-          items.length === 1
-            ? ""
-            : "s"
-        }`;
+      daySummary.textContent =
+        fmtDate(dateKey);
 
-      folder.append(summary);
+      dayFolder.append(
+        daySummary
+      );
 
-      items.forEach((o) => {
-        const row =
-          document.createElement(
-            "div"
+      /*
+        Inside date:
+        group by completion_batch_id.
+
+        Old history records that existed
+        before batch IDs were introduced
+        get their own fallback grouping.
+      */
+      const batches =
+        new Map();
+
+      dateOrders.forEach(
+        (order) => {
+          const key =
+            order.completion_batch_id ||
+            `old-${order.id}`;
+
+          if (!batches.has(key)) {
+            batches.set(
+              key,
+              []
+            );
+          }
+
+          batches
+            .get(key)
+            .push(order);
+        }
+      );
+
+      /*
+        Sort batches newest first.
+      */
+      const batchList =
+        [...batches.values()]
+          .sort(
+            (a, b) =>
+              new Date(
+                b[0]
+                  .completed_at ||
+                  b[0]
+                    .created_at
+              ) -
+              new Date(
+                a[0]
+                  .completed_at ||
+                  a[0]
+                    .created_at
+              )
           );
 
-        row.className =
-          "history-row";
+      batchList.forEach(
+        (batch) => {
+          const productCount =
+            batch.length;
 
-        const body =
-          document.createElement(
-            "div"
+          const totalQty =
+            batch.reduce(
+              (sum, order) =>
+                sum +
+                Math.max(
+                  0,
+                  Number(
+                    order.quantity
+                  ) || 0
+                ),
+              0
+            );
+
+          const completedAt =
+            batch[0]
+              .completed_at ||
+            batch[0]
+              .created_at;
+
+          /*
+            Each completion batch is
+            also expandable.
+          */
+          const batchFolder =
+            document.createElement(
+              "details"
+            );
+
+          batchFolder.className =
+            "history-batch";
+
+          const summary =
+            document.createElement(
+              "summary"
+            );
+
+          summary.className =
+            "history-batch-summary";
+
+          const time =
+            fmtTime(
+              completedAt
+            );
+
+          summary.textContent =
+            `Order completed — ${productCount} product${
+              productCount === 1
+                ? ""
+                : "s"
+            } — ${totalQty} quantit${
+              totalQty === 1
+                ? "y"
+                : "ies"
+            }${
+              time
+                ? ` — ${time}`
+                : ""
+            }`;
+
+          batchFolder.append(
+            summary
           );
 
-        const title =
-          document.createElement(
-            "div"
+          batch.forEach(
+            (order) => {
+              const row =
+                document.createElement(
+                  "div"
+                );
+
+              row.className =
+                "history-row";
+
+              const title =
+                document.createElement(
+                  "div"
+                );
+
+              title.className =
+                "history-date";
+
+              title.textContent =
+                order.product_name;
+
+              const qty =
+                document.createElement(
+                  "div"
+                );
+
+              qty.className =
+                "history-qty";
+
+              qty.textContent =
+                `Qty ${Math.max(
+                  0,
+                  Number(
+                    order.quantity
+                  ) || 0
+                )}`;
+
+              row.append(
+                title,
+                qty
+              );
+
+              batchFolder.append(
+                row
+              );
+            }
           );
 
-        title.className =
-          "history-date";
-
-        title.textContent =
-          o.product_name;
-
-        const meta =
-          document.createElement(
-            "div"
+          dayFolder.append(
+            batchFolder
           );
+        }
+      );
 
-        meta.className = "meta";
-
-        meta.textContent =
-          o.completed_at
-            ? `Completed ${fmtTime(
-                o.completed_at
-              )}`
-            : "";
-
-        body.append(
-          title,
-          meta
-        );
-
-        const qty =
-          document.createElement(
-            "div"
-          );
-
-        qty.className =
-          "history-qty";
-
-        qty.textContent =
-          `Qty ${
-            Number(o.quantity) || 0
-          }`;
-
-        row.append(
-          body,
-          qty
-        );
-
-        folder.append(row);
-      });
-
-      host.append(folder);
+      host.append(
+        dayFolder
+      );
     }
   );
 }
 
-/* =========================
-   AUTH
-========================= */
+/* =====================================================
+   GENERIC BUTTON
+===================================================== */
+
+function button(
+  text,
+  cls,
+  fn
+) {
+  const b =
+    document.createElement(
+      "button"
+    );
+
+  b.type = "button";
+  b.className = cls;
+  b.textContent = text;
+
+  b.addEventListener(
+    "click",
+    fn
+  );
+
+  return b;
+}
+
+/* =====================================================
+   LOGIN
+===================================================== */
 
 $("#authForm").addEventListener(
   "submit",
@@ -1291,10 +1670,12 @@ $("#authForm").addEventListener(
     msg($("#authMessage"));
 
     const email =
-      $("#email").value.trim();
+      $("#email")
+        .value.trim();
 
     const password =
-      $("#password").value;
+      $("#password")
+        .value;
 
     const { data, error } =
       await supabase.auth
@@ -1312,11 +1693,16 @@ $("#authForm").addEventListener(
       return;
     }
 
-    session = data.session;
+    session =
+      data.session;
 
     await loadWorkspace();
   }
 );
+
+/* =====================================================
+   CREATE ACCOUNT
+===================================================== */
 
 $("#signUpBtn").addEventListener(
   "click",
@@ -1324,10 +1710,12 @@ $("#signUpBtn").addEventListener(
     if (!supabase) return;
 
     const email =
-      $("#email").value.trim();
+      $("#email")
+        .value.trim();
 
     const password =
-      $("#password").value;
+      $("#password")
+        .value;
 
     if (
       !email ||
@@ -1342,10 +1730,11 @@ $("#signUpBtn").addEventListener(
     }
 
     const { data, error } =
-      await supabase.auth.signUp({
-        email,
-        password,
-      });
+      await supabase.auth
+        .signUp({
+          email,
+          password,
+        });
 
     if (error) {
       msg(
@@ -1362,80 +1751,92 @@ $("#signUpBtn").addEventListener(
         "Account created. Check your email if confirmation is enabled, then sign in."
       );
     } else {
-      session = data.session;
+      session =
+        data.session;
+
       await loadWorkspace();
     }
   }
 );
 
-/* =========================
+/* =====================================================
    WORKSPACE
-========================= */
+===================================================== */
 
-$("#createWorkspaceForm").addEventListener(
-  "submit",
-  async (e) => {
-    e.preventDefault();
+$("#createWorkspaceForm")
+  .addEventListener(
+    "submit",
+    async (e) => {
+      e.preventDefault();
 
-    const name =
-      $("#workspaceName")
-        .value.trim();
+      const name =
+        $("#workspaceName")
+          .value.trim();
 
-    const { error } =
-      await supabase.rpc(
-        "create_workspace",
-        {
-          p_name: name,
-        }
-      );
+      const { error } =
+        await supabase.rpc(
+          "create_workspace",
+          {
+            p_name: name,
+          }
+        );
 
-    if (error) {
-      msg(
-        $("#workspaceMessage"),
-        error.message
-      );
+      if (error) {
+        msg(
+          $("#workspaceMessage"),
+          error.message
+        );
 
-      return;
+        return;
+      }
+
+      await loadWorkspace();
     }
+  );
 
-    await loadWorkspace();
-  }
-);
+$("#joinWorkspaceForm")
+  .addEventListener(
+    "submit",
+    async (e) => {
+      e.preventDefault();
 
-$("#joinWorkspaceForm").addEventListener(
-  "submit",
-  async (e) => {
-    e.preventDefault();
+      const code =
+        $("#inviteCode")
+          .value
+          .trim()
+          .toUpperCase();
 
-    const code =
-      $("#inviteCode")
-        .value.trim()
-        .toUpperCase();
+      const { error } =
+        await supabase.rpc(
+          "join_workspace",
+          {
+            p_invite_code:
+              code,
+          }
+        );
 
-    const { error } =
-      await supabase.rpc(
-        "join_workspace",
-        {
-          p_invite_code: code,
-        }
-      );
+      if (error) {
+        msg(
+          $("#workspaceMessage"),
+          error.message
+        );
 
-    if (error) {
-      msg(
-        $("#workspaceMessage"),
-        error.message
-      );
+        return;
+      }
 
-      return;
+      await loadWorkspace();
     }
+  );
 
-    await loadWorkspace();
-  }
-);
+/* =====================================================
+   ADD NEW STORE PRODUCT
 
-/* =========================
-   ADD NEW PRODUCT
-========================= */
+   "Usual Qty" is NO LONGER USED.
+
+   default_quantity = 1 is kept silently only
+   for compatibility with the existing database
+   if that column is still required.
+===================================================== */
 
 $("#productForm").addEventListener(
   "submit",
@@ -1457,17 +1858,6 @@ $("#productForm").addEventListener(
       return;
     }
 
-    const defaultQuantity =
-      Math.max(
-        1,
-        Math.min(
-          999,
-          Number(
-            $("#defaultQty").value
-          ) || 1
-        )
-      );
-
     const duplicate =
       products.find(
         (p) =>
@@ -1478,11 +1868,19 @@ $("#productForm").addEventListener(
       );
 
     if (duplicate) {
+      /*
+        Existing item:
+        do NOT create another copy.
+
+        Keep search text so user sees
+        the existing product below.
+      */
       msg(
         $("#productMessage"),
-        "This product already exists."
+        `${duplicate.name} already exists. Adjust its quantity below.`
       );
 
+      renderProducts();
       return;
     }
 
@@ -1492,9 +1890,16 @@ $("#productForm").addEventListener(
         .insert({
           workspace_id:
             workspace.id,
+
           name,
+
+          /*
+            Compatibility only.
+            Not used by app workflow.
+          */
           default_quantity:
-            defaultQuantity,
+            1,
+
           created_by:
             session.user.id,
         });
@@ -1508,29 +1913,38 @@ $("#productForm").addEventListener(
       return;
     }
 
-    $("#productName").value = "";
-    $("#defaultQty").value = "1";
+    /*
+      Clear search after genuinely
+      creating new product.
+    */
+    $("#productName").value =
+      "";
 
-    $("#productName").focus();
+    if ($("#defaultQty")) {
+      $("#defaultQty").value =
+        "1";
+    }
 
     await refreshAll();
+
+    showMain("products");
   }
 );
 
-/* =========================
+/* =====================================================
    DEMO PRODUCTS
-========================= */
+===================================================== */
 
 $("#demoBtn").addEventListener(
   "click",
   async () => {
     const demo = [
-      ["Coca-Cola 20oz", 4],
-      ["Sprite 20oz", 2],
-      ["Diet Coke 20oz", 1],
-      ["Red Bull 12oz", 2],
-      ["Monster Original", 2],
-      ["Monster Mango", 1],
+      "Coca-Cola 20oz",
+      "Sprite 20oz",
+      "Diet Coke 20oz",
+      "Red Bull 12oz",
+      "Monster Original",
+      "Monster Mango",
     ];
 
     const existingNames =
@@ -1542,26 +1956,28 @@ $("#demoBtn").addEventListener(
         )
       );
 
-    const rows = demo
-      .filter(
-        ([name]) =>
-          !existingNames.has(
-            name.toLowerCase()
-          )
-      )
-      .map(
-        ([
-          name,
-          default_quantity,
-        ]) => ({
-          workspace_id:
-            workspace.id,
-          name,
-          default_quantity,
-          created_by:
-            session.user.id,
-        })
-      );
+    const rows =
+      demo
+        .filter(
+          (name) =>
+            !existingNames.has(
+              name.toLowerCase()
+            )
+        )
+        .map(
+          (name) => ({
+            workspace_id:
+              workspace.id,
+
+            name,
+
+            default_quantity:
+              1,
+
+            created_by:
+              session.user.id,
+          })
+        );
 
     if (!rows.length) {
       msg(
@@ -1590,9 +2006,9 @@ $("#demoBtn").addEventListener(
   }
 );
 
-/* =========================
-   MAIN TABS
-========================= */
+/* =====================================================
+   TABS
+===================================================== */
 
 $$(".main-tab").forEach(
   (btn) =>
@@ -1606,20 +2022,23 @@ $$(".main-tab").forEach(
 );
 
 function showMain(name) {
-  $("#weekScreen").classList.toggle(
-    "hidden",
-    name !== "week"
-  );
+  $("#weekScreen")
+    .classList.toggle(
+      "hidden",
+      name !== "week"
+    );
 
-  $("#productsScreen").classList.toggle(
-    "hidden",
-    name !== "products"
-  );
+  $("#productsScreen")
+    .classList.toggle(
+      "hidden",
+      name !== "products"
+    );
 
-  $("#historyScreen").classList.toggle(
-    "hidden",
-    name !== "history"
-  );
+  $("#historyScreen")
+    .classList.toggle(
+      "hidden",
+      name !== "history"
+    );
 
   $$(".main-tab").forEach(
     (b) =>
@@ -1628,53 +2047,97 @@ function showMain(name) {
         b.dataset.screen === name
       )
   );
+
+  /*
+    When opening Products,
+    synchronize drafts with current DB qty
+    unless user is actively searching.
+  */
+  if (name === "products") {
+    products.forEach(
+      (product) => {
+        const active =
+          activeOrderFor(
+            product.id
+          );
+
+        draftQty.set(
+          product.id,
+          active
+            ? Math.max(
+                0,
+                Number(
+                  active.quantity
+                ) || 0
+              )
+            : 0
+        );
+      }
+    );
+
+    renderProducts();
+  }
 }
 
-$("#goProductsBtn").addEventListener(
-  "click",
-  () =>
-    showMain("products")
-);
+/* =====================================================
+   EMPTY CURRENT ORDER -> PRODUCTS
+===================================================== */
 
-/* =========================
+$("#goProductsBtn")
+  .addEventListener(
+    "click",
+    () => {
+      showMain(
+        "products"
+      );
+    }
+  );
+
+/* =====================================================
    INVITE
-========================= */
+===================================================== */
 
-$("#inviteBtn").addEventListener(
-  "click",
-  () =>
-    $("#inviteDialog")
-      .showModal()
-);
+$("#inviteBtn")
+  .addEventListener(
+    "click",
+    () =>
+      $("#inviteDialog")
+        .showModal()
+  );
 
-/* =========================
+/* =====================================================
    SIGN OUT
-========================= */
+===================================================== */
 
 async function signOut() {
   if (channel) {
-    await supabase.removeChannel(
-      channel
-    );
+    await supabase
+      .removeChannel(
+        channel
+      );
   }
 
-  await supabase.auth.signOut();
+  await supabase.auth
+    .signOut();
 
   session = null;
   workspace = null;
   memberRole = "staff";
+
   products = [];
   orders = [];
 
+  draftQty.clear();
   selectedOrderIds.clear();
 
   setScreen("auth");
 }
 
-$("#signOutBtn").addEventListener(
-  "click",
-  signOut
-);
+$("#signOutBtn")
+  .addEventListener(
+    "click",
+    signOut
+  );
 
 $("#workspaceSignOut")
   .addEventListener(
@@ -1683,15 +2146,22 @@ $("#workspaceSignOut")
   );
 
 if (supabase) {
-  supabase.auth.onAuthStateChange(
-    (_event, s) => {
-      session = s;
+  supabase.auth
+    .onAuthStateChange(
+      (_event, s) => {
+        session = s;
 
-      if (!s) {
-        setScreen("auth");
+        if (!s) {
+          setScreen(
+            "auth"
+          );
+        }
       }
-    }
-  );
+    );
 }
+
+/* =====================================================
+   START
+===================================================== */
 
 bootstrap();
