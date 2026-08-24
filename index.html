@@ -2,28 +2,60 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#111827" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  />
+  <meta
+    name="theme-color"
+    content="#111827"
+  />
+
   <title>Store Management App</title>
-  <link rel="stylesheet" href="./styles.css" />
+
+  <link
+    rel="stylesheet"
+    href="./styles.css"
+  />
 </head>
 
 <body>
+
   <main class="shell">
 
-    <section id="authCard" class="card auth-card">
+    <!-- =========================================
+         SIGN IN
+    ========================================== -->
+
+    <section
+      id="authCard"
+      class="card auth-card"
+    >
+
       <div class="brand">
-        <div class="brand-mark">SO</div>
+
+        <div class="brand-mark">
+          SO
+        </div>
 
         <div>
-          <h1>Store Management App</h1>
-          <p>One shared live order for the whole store.</p>
+          <h1>Store Orders</h1>
+
+          <p>
+            Shared ordering for your store team.
+          </p>
         </div>
+
       </div>
 
-      <form id="authForm" class="stack">
+      <form
+        id="authForm"
+        class="stack"
+      >
+
         <label>
           Email
+
           <input
             id="email"
             type="email"
@@ -34,6 +66,7 @@
 
         <label>
           Password
+
           <input
             id="password"
             type="password"
@@ -44,7 +77,11 @@
         </label>
 
         <div class="row">
-          <button class="primary" type="submit">
+
+          <button
+            class="primary"
+            type="submit"
+          >
             Sign in
           </button>
 
@@ -55,6 +92,7 @@
           >
             Create account
           </button>
+
         </div>
 
         <p
@@ -62,21 +100,37 @@
           class="message"
           aria-live="polite"
         ></p>
+
       </form>
+
     </section>
 
+
+    <!-- =========================================
+         WORKSPACE SETUP
+    ========================================== -->
 
     <section
       id="workspaceCard"
       class="card hidden setup-card"
     >
+
       <div class="section-head">
+
         <div>
-          <p class="eyebrow">Setup</p>
-          <h2>Connect your store team</h2>
-          <p class="muted">
-            Create a shared store or join one using an invite code.
+
+          <p class="eyebrow">
+            Setup
           </p>
+
+          <h2>
+            Connect to a store
+          </h2>
+
+          <p class="muted">
+            Create a shared store or join an existing one using its invite code.
+          </p>
+
         </div>
 
         <button
@@ -86,7 +140,9 @@
         >
           Sign out
         </button>
+
       </div>
+
 
       <div class="workspace-grid">
 
@@ -94,10 +150,14 @@
           id="createWorkspaceForm"
           class="panel"
         >
-          <h3>Create shared store</h3>
+
+          <h3>
+            Create shared store
+          </h3>
 
           <label>
             Store name
+
             <input
               id="workspaceName"
               type="text"
@@ -113,6 +173,7 @@
           >
             Create
           </button>
+
         </form>
 
 
@@ -120,10 +181,14 @@
           id="joinWorkspaceForm"
           class="panel"
         >
-          <h3>Join shared store</h3>
+
+          <h3>
+            Join shared store
+          </h3>
 
           <label>
             Invite code
+
             <input
               id="inviteCode"
               type="text"
@@ -140,28 +205,52 @@
           >
             Join
           </button>
+
         </form>
 
       </div>
+
 
       <p
         id="workspaceMessage"
         class="message"
         aria-live="polite"
       ></p>
+
     </section>
 
 
-    <section id="app" class="hidden">
+    <!-- =========================================
+         MAIN APP
+    ========================================== -->
+
+    <section
+      id="app"
+      class="hidden"
+    >
 
       <header class="app-header">
+
         <div>
-          <p class="eyebrow">Shared ordering</p>
-          <h1 id="workspaceTitle">Store Orders</h1>
-          <p id="todayLabel" class="muted"></p>
+
+          <p class="eyebrow">
+            Shared ordering
+          </p>
+
+          <h1 id="workspaceTitle">
+            Store Orders
+          </h1>
+
+          <p
+            id="todayLabel"
+            class="muted"
+          ></p>
+
         </div>
 
+
         <div class="header-actions">
+
           <button
             id="inviteBtn"
             class="secondary"
@@ -177,28 +266,37 @@
           >
             Sign out
           </button>
+
         </div>
+
       </header>
 
+
+      <!-- =====================================
+           MAIN NAVIGATION
+
+           PRODUCTS IS DEFAULT HOME PAGE
+      ====================================== -->
 
       <nav
         class="main-tabs"
         aria-label="Main app views"
       >
-        <button
-          class="main-tab active"
-          data-screen="week"
-          type="button"
-        >
-          Current Order
-        </button>
 
         <button
-          class="main-tab"
+          class="main-tab active"
           data-screen="products"
           type="button"
         >
           Products
+        </button>
+
+        <button
+          class="main-tab"
+          data-screen="week"
+          type="button"
+        >
+          Current Orders
         </button>
 
         <button
@@ -208,96 +306,37 @@
         >
           History
         </button>
+
       </nav>
 
 
-      <section id="weekScreen">
+      <!-- =====================================
+           PRODUCTS
+           DEFAULT WORKING SCREEN
+      ====================================== -->
 
-        <div class="stats-grid">
-
-          <div class="stat card">
-            <span>Items on order</span>
-            <strong id="dueCount">0</strong>
-          </div>
-
-          <div class="stat card">
-            <span>Total quantity</span>
-            <strong id="weekOrderedCount">0</strong>
-          </div>
-
-          <div class="stat card">
-            <span>Products</span>
-            <strong id="productCount">0</strong>
-          </div>
-
-        </div>
-
-
-        <section class="card list-card">
-
-          <div class="list-head">
-            <div>
-              <p class="eyebrow">Live order</p>
-
-              <h2>Current store order</h2>
-
-              <p class="muted">
-                Add an item once, then anyone on the team can adjust its quantity.
-                It stays here until a manager completes the order.
-              </p>
-            </div>
-
-            <div class="live-badge">
-              <span></span>
-              Live
-            </div>
-          </div>
-
-
-          <div id="weekList"></div>
-
-
-          <div
-            id="weekEmpty"
-            class="empty hidden"
-          >
-            <h3>No products yet</h3>
-
-            <p>
-              Add products first to start building the shared order.
-            </p>
-
-            <button
-              id="goProductsBtn"
-              class="primary"
-              type="button"
-            >
-              Add products
-            </button>
-          </div>
-
-        </section>
-
-      </section>
-
-
-      <section
-        id="productsScreen"
-        class="hidden"
-      >
+      <section id="productsScreen">
 
         <section class="card add-card">
 
           <div class="section-head compact">
-            <div>
-              <p class="eyebrow">Product master</p>
 
-              <h2>Add a product</h2>
+            <div>
+
+              <p class="eyebrow">
+                Order builder
+              </p>
+
+              <h2>
+                Find or add a product
+              </h2>
 
               <p class="muted">
-                Add the product name and its usual starting quantity.
+                Type a product name. If it already exists, adjust its current order quantity below. Press Done when the quantity is confirmed.
               </p>
+
             </div>
+
           </div>
 
 
@@ -307,35 +346,24 @@
           >
 
             <label class="wide">
+
               Product
+
               <input
                 id="productName"
                 type="text"
                 maxlength="100"
-                placeholder="Red Bull 12oz"
+                placeholder="Search or add product"
                 required
               />
+
             </label>
-
-
-            <label>
-              Usual qty
-              <input
-                id="defaultQty"
-                type="number"
-                min="1"
-                max="999"
-                value="1"
-                required
-              />
-            </label>
-
 
             <button
               class="primary"
               type="submit"
             >
-              Add product
+              Add new product
             </button>
 
           </form>
@@ -352,7 +380,7 @@
             </button>
 
             <span class="muted small">
-              Useful for testing before entering your real store products.
+              For testing only.
             </span>
 
           </div>
@@ -367,16 +395,33 @@
         </section>
 
 
+        <!-- STORE PRODUCT DATABASE -->
+
         <section class="card list-card">
 
           <div class="list-head">
+
             <div>
-              <p class="eyebrow">Database</p>
-              <h2>Store products</h2>
+
+              <p class="eyebrow">
+                Database
+              </p>
+
+              <h2>
+                Store products
+              </h2>
+
+              <p class="muted">
+                Adjust quantity here, then press Done to confirm it into Current Orders.
+              </p>
+
             </div>
+
           </div>
 
+
           <div id="productList"></div>
+
 
           <div
             id="productEmpty"
@@ -390,6 +435,126 @@
       </section>
 
 
+      <!-- =====================================
+           CURRENT ORDERS
+           REVIEW ONLY
+      ====================================== -->
+
+      <section
+        id="weekScreen"
+        class="hidden"
+      >
+
+        <div class="stats-grid">
+
+          <div class="stat card">
+
+            <span>
+              Items on order
+            </span>
+
+            <strong id="dueCount">
+              0
+            </strong>
+
+          </div>
+
+
+          <div class="stat card">
+
+            <span>
+              Total quantity
+            </span>
+
+            <strong id="weekOrderedCount">
+              0
+            </strong>
+
+          </div>
+
+
+          <div class="stat card">
+
+            <span>
+              Products
+            </span>
+
+            <strong id="productCount">
+              0
+            </strong>
+
+          </div>
+
+        </div>
+
+
+        <section class="card list-card">
+
+          <div class="list-head">
+
+            <div>
+
+              <p class="eyebrow">
+                Current order
+              </p>
+
+              <h2>
+                Pending orders
+              </h2>
+
+              <p class="muted">
+                Check only the products that have actually been ordered, then complete the selected items.
+              </p>
+
+            </div>
+
+
+            <div class="live-badge">
+
+              <span></span>
+
+              Live
+
+            </div>
+
+          </div>
+
+
+          <div id="weekList"></div>
+
+
+          <div
+            id="weekEmpty"
+            class="empty hidden"
+          >
+
+            <h3>
+              No items in current order
+            </h3>
+
+            <p>
+              Go to Products to build the current order.
+            </p>
+
+            <button
+              id="goProductsBtn"
+              class="primary"
+              type="button"
+            >
+              Go to Products
+            </button>
+
+          </div>
+
+        </section>
+
+      </section>
+
+
+      <!-- =====================================
+           HISTORY
+      ====================================== -->
+
       <section
         id="historyScreen"
         class="hidden"
@@ -398,15 +563,23 @@
         <section class="card list-card">
 
           <div class="list-head">
-            <div>
-              <p class="eyebrow">Permanent record</p>
 
-              <h2>Completed orders</h2>
+            <div>
+
+              <p class="eyebrow">
+                Permanent record
+              </p>
+
+              <h2>
+                Completed orders
+              </h2>
 
               <p class="muted">
-                Only orders completed by a manager or senior user appear here.
+                Completed orders are grouped by date and completion batch.
               </p>
+
             </div>
+
           </div>
 
 
@@ -434,6 +607,10 @@
     </section>
 
 
+    <!-- =========================================
+         INVITE DIALOG
+    ========================================== -->
+
     <dialog id="inviteDialog">
 
       <form
@@ -445,17 +622,21 @@
           Invite team member
         </p>
 
-        <h2>Share this code</h2>
+        <h2>
+          Share this code
+        </h2>
+
 
         <div
           id="inviteCodeDisplay"
           class="invite-code"
         ></div>
 
+
         <p class="muted">
-          The team member creates an account, chooses Join shared store,
-          and enters this code.
+          The team member creates an account, chooses Join shared store, and enters this code.
         </p>
+
 
         <button
           class="primary"
@@ -470,7 +651,9 @@
 
   </main>
 
+
   <script src="./config.js"></script>
+
   <script
     type="module"
     src="./app.js"
