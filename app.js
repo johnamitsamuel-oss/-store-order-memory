@@ -31,8 +31,15 @@ const draftQty = new Map();
 const selectedOrderIds = new Set();
 
 /* =====================================================
-   HELPERS
+   BASIC HELPERS
 ===================================================== */
+
+function normalizeName(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
 
 function localDateKey(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
@@ -83,6 +90,22 @@ function isSenior() {
   );
 }
 
+function button(text, cls, fn) {
+  const b = document.createElement("button");
+
+  b.type = "button";
+  b.className = cls;
+  b.textContent = text;
+
+  b.addEventListener("click", fn);
+
+  return b;
+}
+
+/* =====================================================
+   ORDER HELPERS
+===================================================== */
+
 function activeOrders() {
   return orders.filter(
     (o) => !o.status || o.status === "active"
@@ -103,29 +126,31 @@ function activeOrderFor(productId) {
   );
 }
 
-function button(text, cls, fn) {
-  const b = document.createElement("button");
+function matchingProducts(searchText) {
+  const query = normalizeName(searchText);
 
-  b.type = "button";
-  b.className = cls;
-  b.textContent = text;
+  if (!query) return [];
 
-  b.addEventListener("click", fn);
+  return products.filter((product) => {
+    const name = normalizeName(product.name);
 
-  return b;
+    return name.includes(query);
+  });
 }
 
 /* =====================================================
-   DATE
+   TODAY
 ===================================================== */
 
-$("#todayLabel").textContent =
-  new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+if ($("#todayLabel")) {
+  $("#todayLabel").textContent =
+    new Date().toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+}
 
 if (!configured) {
   msg(
@@ -187,6 +212,7 @@ async function loadWorkspace() {
   setScreen("app");
 
   await refreshAll();
+
   subscribeRealtime();
 
   showMain("products");
@@ -217,7 +243,9 @@ async function refreshAll() {
   if (p.error) {
     msg($("#appMessage"), p.error.message);
   } else {
-    products = p.data || [];
+    products = (p.data || []).filter(
+      (product) => product.active !== false
+    );
   }
 
   if (o.error) {
@@ -274,20 +302,19 @@ function subscribeRealtime() {
 }
 
 /* =====================================================
-   RENDER ALL
+   RENDER EVERYTHING
 ===================================================== */
 
 function renderAll() {
   hideOldStats();
   prepareProductResultArea();
-
   renderProducts();
   renderCurrentOrders();
   renderHistory();
 }
 
 /* =====================================================
-   REMOVE USELESS CURRENT ORDER STATS
+   CURRENT ORDERS STATS ARE NOT NEEDED
 ===================================================== */
 
 function hideOldStats() {
@@ -300,9 +327,6 @@ function hideOldStats() {
 
 /* =====================================================
    PRODUCT RESULT AREA
-
-   We reuse the old Store Products card,
-   but it is now ONLY the search result.
 ===================================================== */
 
 function prepareProductResultArea() {
@@ -315,18 +339,16 @@ function prepareProductResultArea() {
   if (!card) return;
 
   const heading = card.querySelector("h2");
+  const eyebrow = card.querySelector(".eyebrow");
+  const description = card.querySelector(".muted");
 
   if (heading) {
     heading.textContent = "Product result";
   }
 
-  const eyebrow = card.querySelector(".eyebrow");
-
   if (eyebrow) {
     eyebrow.textContent = "Order";
   }
-
-  const description = card.querySelector(".muted");
 
   if (description) {
     description.textContent =
@@ -335,9 +357,7 @@ function prepareProductResultArea() {
 }
 
 /* =====================================================
-   PRODUCTS TAB
-
-   TYPE -> MATCH -> +/- -> DONE
+   PRODUCTS SCREEN
 ===================================================== */
 
 function renderProducts() {
@@ -348,22 +368,28 @@ function renderProducts() {
   host.innerHTML = "";
 
   const input = $("#productName");
-
-  const query =
-    (input?.value || "")
-      .trim()
-      .toLowerCase();
-
   const empty = $("#productEmpty");
 
+  const searchText =
+    input?.value?.trim() || "";
+
+  const query =
+    normalizeName(searchText);
+
+  const submitBtn =
+    $("#productForm button[type='submit']");
+
   /*
-    Nothing typed:
-    do NOT show giant product database.
+    Nothing typed.
   */
   if (!query) {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Add new product";
+    }
+
     if (empty) {
       empty.classList.remove("hidden");
-
       empty.textContent =
         "Type a product name above to start an order.";
     }
@@ -371,21 +397,41 @@ function renderProducts() {
     return;
   }
 
+  const matches =
+    matchingProducts(searchText);
+
   /*
-    Find matching products while typing.
+    IMPORTANT DUPLICATE RULE:
+
+    If ANY existing product matches what
+    the user typed, Add New Product is disabled.
+
+    Example:
+    Search = Zyn coolmint
+    Existing = Zyn Coolmint 3
+
+    User must use the existing result below,
+    not accidentally create "Zyn coolmint".
   */
-  const matches = products.filter((p) =>
-    p.name
-      .toLowerCase()
-      .includes(query)
-  );
+  if (matches.length > 0) {
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent =
+        "Matching product found";
+    }
+  } else {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent =
+        "Add new product";
+    }
+  }
 
   if (!matches.length) {
     if (empty) {
       empty.classList.remove("hidden");
-
       empty.textContent =
-        "No matching product. Use Add new product if this is a new item.";
+        "No matching product. If this is a new item, press Add new product.";
     }
 
     return;
@@ -403,15 +449,15 @@ function renderProducts() {
   });
 }
 
+/* =====================================================
+   ONE PRODUCT SEARCH RESULT
+===================================================== */
+
 function renderProductResult(host, product) {
   const active =
     activeOrderFor(product.id);
 
-  /*
-    Current database quantity.
-    If not currently ordered -> 0.
-  */
-  const databaseQty =
+  const savedQty =
     active
       ? Math.max(
           0,
@@ -419,15 +465,20 @@ function renderProductResult(host, product) {
         )
       : 0;
 
-  /*
-    Initialize draft only once.
-  */
   if (!draftQty.has(product.id)) {
     draftQty.set(
       product.id,
-      databaseQty
+      savedQty
     );
   }
+
+  const currentDraft =
+    Math.max(
+      0,
+      Number(
+        draftQty.get(product.id)
+      ) || 0
+    );
 
   const row =
     document.createElement("div");
@@ -449,7 +500,7 @@ function renderProductResult(host, product) {
   meta.className = "meta";
 
   meta.textContent = active
-    ? `Current order: Qty ${databaseQty}`
+    ? `Current order: Qty ${savedQty}`
     : "Not currently on order";
 
   body.append(
@@ -472,47 +523,38 @@ function renderProductResult(host, product) {
   const minus =
     document.createElement("button");
 
+  minus.type = "button";
+  minus.className = "mini";
+  minus.textContent = "−";
+
   const qty =
     document.createElement("span");
-
-  const plus =
-    document.createElement("button");
-
-  minus.type = "button";
-  plus.type = "button";
-
-  minus.className = "mini";
-  plus.className = "mini";
-
-  minus.textContent = "−";
-  plus.textContent = "+";
-
-  const currentDraft =
-    Math.max(
-      0,
-      Number(
-        draftQty.get(product.id)
-      ) || 0
-    );
 
   qty.className = "qty-pill";
   qty.textContent =
     `Qty ${currentDraft}`;
 
+  const plus =
+    document.createElement("button");
+
+  plus.type = "button";
+  plus.className = "mini";
+  plus.textContent = "+";
+
   minus.addEventListener(
     "click",
     () => {
       const old =
-        Number(
-          draftQty.get(product.id)
-        ) || 0;
-
-      const next =
-        Math.max(0, old - 1);
+        Math.max(
+          0,
+          Number(
+            draftQty.get(product.id)
+          ) || 0
+        );
 
       draftQty.set(
         product.id,
-        next
+        Math.max(0, old - 1)
       );
 
       renderProducts();
@@ -523,16 +565,16 @@ function renderProductResult(host, product) {
     "click",
     () => {
       const old =
-        Number(
-          draftQty.get(product.id)
-        ) || 0;
-
-      const next =
-        Math.min(999, old + 1);
+        Math.max(
+          0,
+          Number(
+            draftQty.get(product.id)
+          ) || 0
+        );
 
       draftQty.set(
         product.id,
-        next
+        Math.min(999, old + 1)
       );
 
       renderProducts();
@@ -554,11 +596,11 @@ function renderProductResult(host, product) {
   );
 
   /*
-    New/currently absent product cannot
-    be sent to Current Orders at Qty 0.
+    Brand-new current order cannot begin
+    with Qty 0.
 
-    BUT once it is already on Current Orders,
-    Qty 0 IS allowed and remains pending.
+    But an ALREADY EXISTING current order
+    is allowed to remain Qty 0.
   */
   if (!active && currentDraft === 0) {
     done.disabled = true;
@@ -592,27 +634,21 @@ function renderProductResult(host, product) {
 }
 
 /* =====================================================
-   LIVE PRODUCT SEARCH
+   LIVE SEARCH
 ===================================================== */
 
 if ($("#productName")) {
-  $("#productName")
-    .addEventListener(
-      "input",
-      () => {
-        /*
-          A different search should initialize
-          from current database quantity.
-        */
-        renderProducts();
-      }
-    );
+  $("#productName").addEventListener(
+    "input",
+    () => {
+      msg($("#productMessage"));
+      renderProducts();
+    }
+  );
 }
 
 /* =====================================================
-   DONE PRODUCT
-
-   Add/update Current Orders.
+   CONFIRM PRODUCT INTO CURRENT ORDERS
 ===================================================== */
 
 async function confirmProductOrder(product) {
@@ -634,10 +670,10 @@ async function confirmProductOrder(product) {
     activeOrderFor(product.id);
 
   /*
-    EXISTING CURRENT ORDER
+    Product already exists in Current Orders.
 
-    Qty 0 is valid here.
-    Item remains in Current Orders.
+    Qty 0 is allowed.
+    Item stays pending.
   */
   if (active) {
     const { error } =
@@ -664,14 +700,12 @@ async function confirmProductOrder(product) {
       `${product.name} updated to Qty ${quantity}.`
     );
 
-    draftQty.delete(product.id);
+    draftQty.delete(
+      product.id
+    );
 
     await refreshAll();
 
-    /*
-      Stay on Products.
-      Clear search ready for next item.
-    */
     $("#productName").value = "";
 
     renderProducts();
@@ -680,15 +714,57 @@ async function confirmProductOrder(product) {
   }
 
   /*
-    NEW CURRENT ORDER
-
-    Need at least Qty 1 initially.
+    Product is not yet in Current Orders.
   */
   if (quantity <= 0) {
     msg(
       $("#productMessage"),
       "Set quantity before pressing Done."
     );
+
+    return;
+  }
+
+  /*
+    Safety check against duplicate ACTIVE order.
+    Useful when two users work at same time.
+  */
+  const { data: existingActive, error: checkError } =
+    await supabase
+      .from("orders")
+      .select("*")
+      .eq(
+        "workspace_id",
+        workspace.id
+      )
+      .eq(
+        "product_id",
+        product.id
+      )
+      .or(
+        "status.eq.active,status.is.null"
+      )
+      .limit(1)
+      .maybeSingle();
+
+  if (checkError) {
+    msg(
+      $("#productMessage"),
+      checkError.message
+    );
+
+    return;
+  }
+
+  if (existingActive) {
+    msg(
+      $("#productMessage"),
+      `${product.name} is already on Current Orders at Qty ${Number(
+        existingActive.quantity
+      ) || 0}. Refreshing now.`
+    );
+
+    await refreshAll();
 
     return;
   }
@@ -732,14 +808,12 @@ async function confirmProductOrder(product) {
     `${product.name} added to Current Orders — Qty ${quantity}.`
   );
 
-  draftQty.delete(product.id);
+  draftQty.delete(
+    product.id
+  );
 
   await refreshAll();
 
-  /*
-    Products stays HOME.
-    Search clears for next product.
-  */
   $("#productName").value = "";
 
   renderProducts();
@@ -747,8 +821,6 @@ async function confirmProductOrder(product) {
 
 /* =====================================================
    ADD NEW PRODUCT
-
-   No Usual Qty concept.
 ===================================================== */
 
 $("#productForm").addEventListener(
@@ -773,32 +845,24 @@ $("#productForm").addEventListener(
     }
 
     /*
-      Prevent duplicate product names.
-    */
-    const existing =
-      products.find(
-        (p) =>
-          p.name
-            .trim()
-            .toLowerCase() ===
-          name.toLowerCase()
-      );
+      DUPLICATE PROTECTION #1
 
-    if (existing) {
+      If search text already finds any
+      existing active product, do not create
+      a new product.
+
+      Example:
+      "Zyn coolmint"
+      already finds
+      "Zyn Coolmint 3"
+    */
+    const matches =
+      matchingProducts(name);
+
+    if (matches.length > 0) {
       msg(
         $("#productMessage"),
-        `${existing.name} already exists. Adjust its quantity below.`
-      );
-
-      draftQty.set(
-        existing.id,
-        activeOrderFor(existing.id)
-          ? Number(
-              activeOrderFor(
-                existing.id
-              ).quantity
-            ) || 0
-          : 0
+        "Matching product already exists. Use the result below."
       );
 
       renderProducts();
@@ -807,11 +871,120 @@ $("#productForm").addEventListener(
     }
 
     /*
-      Database may still require
-      default_quantity column,
-      so silently save 1.
+      DUPLICATE PROTECTION #2
 
-      User never sees/uses it.
+      Exact active name check.
+    */
+    const exact =
+      products.find(
+        (product) =>
+          normalizeName(product.name) ===
+          normalizeName(name)
+      );
+
+    if (exact) {
+      msg(
+        $("#productMessage"),
+        `${exact.name} already exists. Use the result below.`
+      );
+
+      renderProducts();
+
+      return;
+    }
+
+    /*
+      Check database for a previously deleted
+      product with exactly the same name.
+
+      If found, reactivate it instead of
+      creating another duplicate row.
+    */
+    const { data: oldRows, error: oldError } =
+      await supabase
+        .from("products")
+        .select("*")
+        .eq(
+          "workspace_id",
+          workspace.id
+        )
+        .ilike(
+          "name",
+          name
+        )
+        .limit(10);
+
+    if (oldError) {
+      msg(
+        $("#productMessage"),
+        oldError.message
+      );
+
+      return;
+    }
+
+    const deletedExact =
+      (oldRows || []).find(
+        (product) =>
+          normalizeName(product.name) ===
+          normalizeName(name) &&
+          product.active === false
+      );
+
+    if (deletedExact) {
+      const { data: restored, error: restoreError } =
+        await supabase
+          .from("products")
+          .update({
+            active: true,
+            name,
+          })
+          .eq(
+            "id",
+            deletedExact.id
+          )
+          .select()
+          .single();
+
+      if (restoreError) {
+        msg(
+          $("#productMessage"),
+          restoreError.message
+        );
+
+        return;
+      }
+
+      draftQty.set(
+        restored.id,
+        1
+      );
+
+      msg(
+        $("#productMessage"),
+        `${name} restored. Confirm quantity below and press Done.`
+      );
+
+      await refreshAll();
+
+      $("#productName").value =
+        name;
+
+      draftQty.set(
+        restored.id,
+        1
+      );
+
+      renderProducts();
+
+      return;
+    }
+
+    /*
+      Truly new product.
+      default_quantity remains only because
+      old database schema may require it.
+      User never sees or uses "usual qty".
     */
     const { data, error } =
       await supabase
@@ -824,6 +997,9 @@ $("#productForm").addEventListener(
 
           default_quantity:
             1,
+
+          active:
+            true,
 
           created_by:
             session.user.id,
@@ -841,11 +1017,10 @@ $("#productForm").addEventListener(
     }
 
     /*
-      Brand-new product starts at Qty 1
-      in the search result.
+      New product starts as draft Qty 1.
+      It is NOT yet in Current Orders.
 
-      It is NOT Current Order yet.
-      User still presses Done.
+      User must still press Done.
     */
     draftQty.set(
       data.id,
@@ -859,10 +1034,6 @@ $("#productForm").addEventListener(
 
     await refreshAll();
 
-    /*
-      KEEP the typed name in search box,
-      so the new product appears immediately.
-    */
     $("#productName").value =
       name;
 
@@ -904,10 +1075,8 @@ async function editProduct(product) {
     products.find(
       (p) =>
         p.id !== product.id &&
-        p.name
-          .trim()
-          .toLowerCase() ===
-          cleanName.toLowerCase()
+        normalizeName(p.name) ===
+          normalizeName(cleanName)
     );
 
   if (duplicate) {
@@ -925,7 +1094,10 @@ async function editProduct(product) {
       .update({
         name: cleanName,
       })
-      .eq("id", product.id);
+      .eq(
+        "id",
+        product.id
+      );
 
   if (error) {
     msg(
@@ -937,27 +1109,31 @@ async function editProduct(product) {
   }
 
   /*
-    Update ACTIVE order name.
+    Current active order should use
+    the new product name.
 
-    Completed History is NOT changed.
+    Completed History remains unchanged.
   */
   const active =
     activeOrderFor(product.id);
 
   if (active) {
-    const { error: activeError } =
+    const { error: orderError } =
       await supabase
         .from("orders")
         .update({
           product_name:
             cleanName,
         })
-        .eq("id", active.id);
+        .eq(
+          "id",
+          active.id
+        );
 
-    if (activeError) {
+    if (orderError) {
       msg(
         $("#productMessage"),
-        activeError.message
+        orderError.message
       );
 
       return;
@@ -967,15 +1143,28 @@ async function editProduct(product) {
   $("#productName").value =
     cleanName;
 
+  draftQty.delete(
+    product.id
+  );
+
   await refreshAll();
+
   renderProducts();
 }
 
 /* =====================================================
    DELETE PRODUCT
 
-   Deletes/retire from product database.
-   Completed History remains untouched.
+   IMPORTANT:
+   We soft-delete from Products database.
+
+   That means:
+   active = false
+
+   So:
+   - no longer appears in search
+   - cannot confuse future ordering
+   - completed History stays intact
 ===================================================== */
 
 async function deleteProduct(product) {
@@ -987,7 +1176,7 @@ async function deleteProduct(product) {
 
   if (active) {
     warning +=
-      "\n\nIt is also on Current Orders and will be removed from there.";
+      "\n\nIt is also in Current Orders. It will be removed from Current Orders too.";
   }
 
   const ok =
@@ -995,17 +1184,23 @@ async function deleteProduct(product) {
 
   if (!ok) return;
 
+  /*
+    Remove unfinished Current Order first.
+  */
   if (active) {
-    const { error: orderError } =
+    const { error: activeError } =
       await supabase
         .from("orders")
         .delete()
-        .eq("id", active.id);
+        .eq(
+          "id",
+          active.id
+        );
 
-    if (orderError) {
+    if (activeError) {
       msg(
         $("#productMessage"),
-        orderError.message
+        activeError.message
       );
 
       return;
@@ -1017,38 +1212,34 @@ async function deleteProduct(product) {
   }
 
   /*
-    Try permanent deletion first.
+    Do NOT hard-delete product row.
+
+    Retire it instead so completed History
+    and database relationships remain safe.
   */
   const { error } =
     await supabase
       .from("products")
-      .delete()
-      .eq("id", product.id);
-
-  /*
-    If database relationship blocks delete,
-    retire/hide product instead.
-  */
-  if (error) {
-    const { error: softError } =
-      await supabase
-        .from("products")
-        .update({
-          active: false,
-        })
-        .eq("id", product.id);
-
-    if (softError) {
-      msg(
-        $("#productMessage"),
-        softError.message
+      .update({
+        active: false,
+      })
+      .eq(
+        "id",
+        product.id
       );
 
-      return;
-    }
+  if (error) {
+    msg(
+      $("#productMessage"),
+      error.message
+    );
+
+    return;
   }
 
-  draftQty.delete(product.id);
+  draftQty.delete(
+    product.id
+  );
 
   $("#productName").value = "";
 
@@ -1058,28 +1249,25 @@ async function deleteProduct(product) {
   );
 
   await refreshAll();
+
+  renderProducts();
 }
 
 /* =====================================================
    CURRENT ORDERS
 
-   REVIEW ONLY:
+   Review only:
    checkbox + product + quantity
-
-   NO + / -
 ===================================================== */
 
 function renderCurrentOrders() {
-  const host = $("#weekList");
+  const host =
+    $("#weekList");
 
   if (!host) return;
 
   host.innerHTML = "";
 
-  /*
-    Remove old Complete Selected button
-    before rebuilding screen.
-  */
   const oldBtn =
     $("#completeOrderBtn");
 
@@ -1129,7 +1317,9 @@ function renderCurrentOrders() {
   }
 
   if (empty) {
-    empty.classList.add("hidden");
+    empty.classList.add(
+      "hidden"
+    );
   }
 
   active.forEach((order) => {
@@ -1190,7 +1380,8 @@ function renderCurrentOrders() {
     const qty =
       document.createElement("div");
 
-    qty.className = "meta";
+    qty.className =
+      "meta";
 
     qty.textContent =
       `Qty ${Math.max(
@@ -1210,12 +1401,11 @@ function renderCurrentOrders() {
       body
     );
 
-    host.append(row);
+    host.append(
+      row
+    );
   });
 
-  /*
-    Complete Selected goes AFTER all products.
-  */
   ensureCompleteSelectedButton();
 }
 
@@ -1251,7 +1441,7 @@ function ensureCompleteSelectedButton() {
   );
 
   /*
-    Put button AFTER product list.
+    Button is AFTER all pending products.
   */
   host.parentElement.append(
     btn
@@ -1279,7 +1469,7 @@ function updateCompleteSelectedButton() {
 }
 
 /* =====================================================
-   COMPLETE SELECTED ORDER BATCH
+   COMPLETE SELECTED ORDERS
 ===================================================== */
 
 async function completeSelectedOrders() {
@@ -1294,9 +1484,9 @@ async function completeSelectedOrders() {
 
   const selected =
     activeOrders().filter(
-      (o) =>
+      (order) =>
         selectedOrderIds.has(
-          o.id
+          order.id
         )
     );
 
@@ -1334,8 +1524,8 @@ async function completeSelectedOrders() {
   if (!ok) return;
 
   /*
-    Same Batch ID for everything selected
-    in THIS completion click.
+    All products completed in this click
+    receive the same batch ID.
   */
   const batchId =
     crypto.randomUUID();
@@ -1345,7 +1535,8 @@ async function completeSelectedOrders() {
 
   const ids =
     selected.map(
-      (o) => o.id
+      (order) =>
+        order.id
     );
 
   const { error } =
@@ -1364,7 +1555,10 @@ async function completeSelectedOrders() {
         completion_batch_id:
           batchId,
       })
-      .in("id", ids);
+      .in(
+        "id",
+        ids
+      );
 
   if (error) {
     msg(
@@ -1375,15 +1569,17 @@ async function completeSelectedOrders() {
     return;
   }
 
-  selected.forEach((order) => {
-    selectedOrderIds.delete(
-      order.id
-    );
+  selected.forEach(
+    (order) => {
+      selectedOrderIds.delete(
+        order.id
+      );
 
-    draftQty.delete(
-      order.product_id
-    );
-  });
+      draftQty.delete(
+        order.product_id
+      );
+    }
+  );
 
   msg(
     $("#appMessage"),
@@ -1401,9 +1597,7 @@ async function completeSelectedOrders() {
 
 /* =====================================================
    HISTORY
-
-   KEEP CURRENT WORKING STRUCTURE:
-   DATE -> BATCH -> PRODUCTS
+   DATE -> COMPLETION BATCH -> PRODUCTS
 ===================================================== */
 
 function renderHistory() {
@@ -1443,9 +1637,6 @@ function renderHistory() {
     return;
   }
 
-  /*
-    DATE GROUPS
-  */
   const dateGroups =
     new Map();
 
@@ -1513,9 +1704,6 @@ function renderHistory() {
       daySummary
     );
 
-    /*
-      BATCH GROUPS
-    */
     const batches =
       new Map();
 
@@ -1680,10 +1868,13 @@ $("#authForm").addEventListener(
     msg($("#authMessage"));
 
     const email =
-      $("#email").value.trim();
+      $("#email")
+        .value
+        .trim();
 
     const password =
-      $("#password").value;
+      $("#password")
+        .value;
 
     const { data, error } =
       await supabase.auth
@@ -1718,10 +1909,13 @@ $("#signUpBtn").addEventListener(
     if (!supabase) return;
 
     const email =
-      $("#email").value.trim();
+      $("#email")
+        .value
+        .trim();
 
     const password =
-      $("#password").value;
+      $("#password")
+        .value;
 
     if (
       !email ||
@@ -1736,10 +1930,11 @@ $("#signUpBtn").addEventListener(
     }
 
     const { data, error } =
-      await supabase.auth.signUp({
-        email,
-        password,
-      });
+      await supabase.auth
+        .signUp({
+          email,
+          password,
+        });
 
     if (error) {
       msg(
@@ -1765,7 +1960,7 @@ $("#signUpBtn").addEventListener(
 );
 
 /* =====================================================
-   WORKSPACE
+   CREATE WORKSPACE
 ===================================================== */
 
 $("#createWorkspaceForm").addEventListener(
@@ -1775,13 +1970,15 @@ $("#createWorkspaceForm").addEventListener(
 
     const name =
       $("#workspaceName")
-        .value.trim();
+        .value
+        .trim();
 
     const { error } =
       await supabase.rpc(
         "create_workspace",
         {
-          p_name: name,
+          p_name:
+            name,
         }
       );
 
@@ -1797,6 +1994,10 @@ $("#createWorkspaceForm").addEventListener(
     await loadWorkspace();
   }
 );
+
+/* =====================================================
+   JOIN WORKSPACE
+===================================================== */
 
 $("#joinWorkspaceForm").addEventListener(
   "submit",
@@ -1849,10 +2050,11 @@ $("#demoBtn").addEventListener(
 
     const existingNames =
       new Set(
-        products.map((p) =>
-          p.name
-            .trim()
-            .toLowerCase()
+        products.map(
+          (product) =>
+            normalizeName(
+              product.name
+            )
         )
       );
 
@@ -1861,7 +2063,7 @@ $("#demoBtn").addEventListener(
         .filter(
           (name) =>
             !existingNames.has(
-              name.toLowerCase()
+              normalizeName(name)
             )
         )
         .map((name) => ({
@@ -1872,6 +2074,9 @@ $("#demoBtn").addEventListener(
 
           default_quantity:
             1,
+
+          active:
+            true,
 
           created_by:
             session.user.id,
@@ -1908,49 +2113,43 @@ $("#demoBtn").addEventListener(
    TABS
 ===================================================== */
 
-$$(".main-tab").forEach((btn) =>
-  btn.addEventListener(
-    "click",
-    () =>
-      showMain(
-        btn.dataset.screen
-      )
-  )
+$$(".main-tab").forEach(
+  (btn) =>
+    btn.addEventListener(
+      "click",
+      () =>
+        showMain(
+          btn.dataset.screen
+        )
+    )
 );
 
 function showMain(name) {
-  $("#weekScreen")
-    .classList.toggle(
-      "hidden",
-      name !== "week"
-    );
+  $("#weekScreen").classList.toggle(
+    "hidden",
+    name !== "week"
+  );
 
-  $("#productsScreen")
-    .classList.toggle(
-      "hidden",
-      name !== "products"
-    );
+  $("#productsScreen").classList.toggle(
+    "hidden",
+    name !== "products"
+  );
 
-  $("#historyScreen")
-    .classList.toggle(
-      "hidden",
-      name !== "history"
-    );
+  $("#historyScreen").classList.toggle(
+    "hidden",
+    name !== "history"
+  );
 
-  $$(".main-tab").forEach((b) =>
-    b.classList.toggle(
-      "active",
-      b.dataset.screen === name
-    )
+  $$(".main-tab").forEach(
+    (btn) =>
+      btn.classList.toggle(
+        "active",
+        btn.dataset.screen === name
+      )
   );
 
   if (name === "products") {
-    /*
-      Re-sync drafts from Current Orders
-      when returning to Products.
-    */
     draftQty.clear();
-
     renderProducts();
   }
 
@@ -1964,7 +2163,7 @@ function showMain(name) {
 }
 
 /* =====================================================
-   GO PRODUCTS
+   GO TO PRODUCTS
 ===================================================== */
 
 $("#goProductsBtn").addEventListener(
@@ -2033,7 +2232,7 @@ if (supabase) {
 }
 
 /* =====================================================
-   START
+   START APP
 ===================================================== */
 
 bootstrap();
