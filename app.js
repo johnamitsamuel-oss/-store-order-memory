@@ -27,37 +27,24 @@ let products = [];
 let orders = [];
 let channel = null;
 
-/*
-  Product quantity being edited on Products tab.
-
-  IMPORTANT:
-  Changing +/- does NOT immediately change Current Order.
-  User must press Done.
-*/
 const draftQty = new Map();
-
-/*
-  Current Order checkboxes selected for completion.
-*/
 const selectedOrderIds = new Set();
 
 /* =====================================================
-   BASIC HELPERS
+   HELPERS
 ===================================================== */
 
 function localDateKey(d = new Date()) {
-  return `${d.getFullYear()}-${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function parseDateKey(k) {
   if (!k) return new Date();
 
   const [y, m, d] = k.split("-").map(Number);
-
   return new Date(y, m - 1, d);
 }
 
@@ -81,38 +68,56 @@ function fmtTime(value) {
 }
 
 function msg(el, text = "") {
-  if (el) {
-    el.textContent = text;
-  }
+  if (el) el.textContent = text;
 }
 
 function setScreen(name) {
-  authCard.classList.toggle(
-    "hidden",
-    name !== "auth"
-  );
-
-  workspaceCard.classList.toggle(
-    "hidden",
-    name !== "workspace"
-  );
-
-  app.classList.toggle(
-    "hidden",
-    name !== "app"
-  );
+  authCard.classList.toggle("hidden", name !== "auth");
+  workspaceCard.classList.toggle("hidden", name !== "workspace");
+  app.classList.toggle("hidden", name !== "app");
 }
 
 function isSenior() {
-  return [
-    "manager",
-    "owner",
-    "boss",
-    "admin",
-  ].includes(
+  return ["manager", "owner", "boss", "admin"].includes(
     String(memberRole || "").toLowerCase()
   );
 }
+
+function activeOrders() {
+  return orders.filter(
+    (o) => !o.status || o.status === "active"
+  );
+}
+
+function completedOrders() {
+  return orders.filter(
+    (o) => o.status === "completed"
+  );
+}
+
+function activeOrderFor(productId) {
+  return (
+    activeOrders().find(
+      (o) => o.product_id === productId
+    ) || null
+  );
+}
+
+function button(text, cls, fn) {
+  const b = document.createElement("button");
+
+  b.type = "button";
+  b.className = cls;
+  b.textContent = text;
+
+  b.addEventListener("click", fn);
+
+  return b;
+}
+
+/* =====================================================
+   DATE
+===================================================== */
 
 $("#todayLabel").textContent =
   new Date().toLocaleDateString("en-US", {
@@ -130,7 +135,7 @@ if (!configured) {
 }
 
 /* =====================================================
-   AUTH / STARTUP
+   STARTUP
 ===================================================== */
 
 async function bootstrap() {
@@ -139,8 +144,7 @@ async function bootstrap() {
     return;
   }
 
-  const { data } =
-    await supabase.auth.getSession();
+  const { data } = await supabase.auth.getSession();
 
   session = data.session;
 
@@ -163,11 +167,7 @@ async function loadWorkspace() {
     .maybeSingle();
 
   if (error) {
-    msg(
-      $("#workspaceMessage"),
-      error.message
-    );
-
+    msg($("#workspaceMessage"), error.message);
     setScreen("workspace");
     return;
   }
@@ -180,26 +180,20 @@ async function loadWorkspace() {
   workspace = data.workspaces;
   memberRole = data.role || "staff";
 
-  $("#workspaceTitle").textContent =
-    workspace.name;
-
+  $("#workspaceTitle").textContent = workspace.name;
   $("#inviteCodeDisplay").textContent =
     workspace.invite_code;
 
   setScreen("app");
 
   await refreshAll();
-
   subscribeRealtime();
 
-  /*
-    PRODUCTS IS THE HOME PAGE.
-  */
   showMain("products");
 }
 
 /* =====================================================
-   DATABASE LOAD
+   LOAD DATABASE
 ===================================================== */
 
 async function refreshAll() {
@@ -211,41 +205,27 @@ async function refreshAll() {
       .select("*")
       .eq("workspace_id", workspace.id)
       .eq("active", true)
-      .order("name", {
-        ascending: true,
-      }),
+      .order("name", { ascending: true }),
 
     supabase
       .from("orders")
       .select("*")
       .eq("workspace_id", workspace.id)
-      .order("created_at", {
-        ascending: false,
-      }),
+      .order("created_at", { ascending: false }),
   ]);
 
   if (p.error) {
-    msg(
-      $("#appMessage"),
-      p.error.message
-    );
+    msg($("#appMessage"), p.error.message);
   } else {
     products = p.data || [];
   }
 
   if (o.error) {
-    msg(
-      $("#appMessage"),
-      o.error.message
-    );
+    msg($("#appMessage"), o.error.message);
   } else {
     orders = o.data || [];
   }
 
-  /*
-    Remove checkbox selections belonging
-    to orders that are no longer active.
-  */
   const activeIds = new Set(
     activeOrders().map((o) => o.id)
   );
@@ -256,32 +236,12 @@ async function refreshAll() {
     }
   });
 
-  /*
-    Do NOT overwrite a quantity currently
-    being edited in Products tab.
-
-    But initialize drafts for products that
-    do not yet have one.
-  */
-  products.forEach((product) => {
-    if (!draftQty.has(product.id)) {
-      const active =
-        activeOrderFor(product.id);
-
-      draftQty.set(
-        product.id,
-        active
-          ? Math.max(
-              0,
-              Number(active.quantity) || 0
-            )
-          : 0
-      );
-    }
-  });
-
   renderAll();
 }
+
+/* =====================================================
+   REALTIME
+===================================================== */
 
 function subscribeRealtime() {
   if (channel) {
@@ -296,8 +256,7 @@ function subscribeRealtime() {
         event: "*",
         schema: "public",
         table: "products",
-        filter:
-          `workspace_id=eq.${workspace.id}`,
+        filter: `workspace_id=eq.${workspace.id}`,
       },
       refreshAll
     )
@@ -307,8 +266,7 @@ function subscribeRealtime() {
         event: "*",
         schema: "public",
         table: "orders",
-        filter:
-          `workspace_id=eq.${workspace.id}`,
+        filter: `workspace_id=eq.${workspace.id}`,
       },
       refreshAll
     )
@@ -316,561 +274,345 @@ function subscribeRealtime() {
 }
 
 /* =====================================================
-   ORDER HELPERS
-===================================================== */
-
-function activeOrders() {
-  return orders.filter(
-    (o) =>
-      !o.status ||
-      o.status === "active"
-  );
-}
-
-function completedOrders() {
-  return orders.filter(
-    (o) => o.status === "completed"
-  );
-}
-
-function activeOrderFor(productId) {
-  return (
-    activeOrders().find(
-      (o) => o.product_id === productId
-    ) || null
-  );
-}
-
-function productFor(productId) {
-  return (
-    products.find(
-      (p) => p.id === productId
-    ) || null
-  );
-}
-
-/* =====================================================
    RENDER ALL
 ===================================================== */
 
 function renderAll() {
-  renderStats();
-  renderCurrentOrders();
+  hideOldStats();
+  prepareProductResultArea();
+
   renderProducts();
+  renderCurrentOrders();
   renderHistory();
 }
 
 /* =====================================================
-   COUNTERS
+   REMOVE USELESS CURRENT ORDER STATS
 ===================================================== */
 
-function renderStats() {
-  const active = activeOrders();
+function hideOldStats() {
+  const stats = $(".stats-grid");
 
-  const positive = active.filter(
-    (o) =>
-      (Number(o.quantity) || 0) > 0
-  );
-
-  if ($("#dueCount")) {
-    $("#dueCount").textContent =
-      positive.length;
-  }
-
-  if ($("#weekOrderedCount")) {
-    $("#weekOrderedCount").textContent =
-      positive.reduce(
-        (sum, o) =>
-          sum +
-          Math.max(
-            0,
-            Number(o.quantity) || 0
-          ),
-        0
-      );
-  }
-
-  if ($("#productCount")) {
-    $("#productCount").textContent =
-      products.length;
+  if (stats) {
+    stats.classList.add("hidden");
   }
 }
 
 /* =====================================================
-   CURRENT ORDERS TAB
+   PRODUCT RESULT AREA
 
-   REVIEW ONLY.
-   NO +/- HERE.
+   We reuse the old Store Products card,
+   but it is now ONLY the search result.
 ===================================================== */
 
-function renderCurrentOrders() {
-  const host = $("#weekList");
+function prepareProductResultArea() {
+  const host = $("#productList");
 
   if (!host) return;
 
-  host.innerHTML = "";
+  const card = host.closest(".list-card");
 
-  const active = [...activeOrders()].sort(
-    (a, b) =>
-      String(
-        a.product_name || ""
-      ).localeCompare(
-        String(b.product_name || "")
-      )
-  );
+  if (!card) return;
 
-  ensureCompleteSelectedButton();
+  const heading = card.querySelector("h2");
 
-  if ($("#weekEmpty")) {
-    $("#weekEmpty").classList.toggle(
-      "hidden",
-      active.length > 0
-    );
-
-    const emptyTitle =
-      $("#weekEmpty h3");
-
-    const emptyText =
-      $("#weekEmpty p");
-
-    if (emptyTitle) {
-      emptyTitle.textContent =
-        "No items in current order";
-    }
-
-    if (emptyText) {
-      emptyText.textContent =
-        "Go to Products to build the current order.";
-    }
+  if (heading) {
+    heading.textContent = "Product result";
   }
 
-  active.forEach((order) => {
-    const row =
-      document.createElement("div");
+  const eyebrow = card.querySelector(".eyebrow");
 
-    row.className = "order-row";
-
-    /*
-      Checkbox first
-    */
-    const check =
-      document.createElement("input");
-
-    check.type = "checkbox";
-    check.className = "check";
-
-    check.checked =
-      selectedOrderIds.has(order.id);
-
-    check.setAttribute(
-      "aria-label",
-      `Select ${order.product_name}`
-    );
-
-    check.addEventListener(
-      "change",
-      () => {
-        if (check.checked) {
-          selectedOrderIds.add(order.id);
-        } else {
-          selectedOrderIds.delete(order.id);
-        }
-
-        updateCompleteSelectedButton();
-      }
-    );
-
-    /*
-      Product name + quantity
-    */
-    const body =
-      document.createElement("div");
-
-    const title =
-      document.createElement("div");
-
-    title.className = "item-title";
-    title.textContent =
-      order.product_name;
-
-    const meta =
-      document.createElement("div");
-
-    meta.className = "meta";
-    meta.textContent =
-      `Qty ${Math.max(
-        0,
-        Number(order.quantity) || 0
-      )}`;
-
-    body.append(
-      title,
-      meta
-    );
-
-    /*
-      No quantity buttons in Current Orders.
-    */
-    row.append(
-      check,
-      body
-    );
-
-    host.append(row);
-  });
-}
-
-/* =====================================================
-   COMPLETE SELECTED BUTTON
-===================================================== */
-
-function ensureCompleteSelectedButton() {
-  const host = $("#weekList");
-
-  if (!host) return;
-
-  let btn =
-    $("#completeOrderBtn");
-
-  /*
-    Keeping current role behavior for now.
-    Hierarchy itself comes later.
-  */
-  if (!isSenior()) {
-    if (btn) {
-      btn.remove();
-    }
-
-    return;
+  if (eyebrow) {
+    eyebrow.textContent = "Order";
   }
 
-  if (!btn) {
-    btn =
-      document.createElement("button");
+  const description = card.querySelector(".muted");
 
-    btn.id =
-      "completeOrderBtn";
-
-    btn.type = "button";
-    btn.className = "primary";
-
-    btn.addEventListener(
-      "click",
-      completeSelectedOrders
-    );
-
-    host.parentElement.insertBefore(
-      btn,
-      host
-    );
+  if (description) {
+    description.textContent =
+      "Adjust quantity here and press Done.";
   }
-
-  updateCompleteSelectedButton();
-}
-
-function updateCompleteSelectedButton() {
-  const btn =
-    $("#completeOrderBtn");
-
-  if (!btn) return;
-
-  const count =
-    selectedOrderIds.size;
-
-  btn.disabled =
-    count === 0;
-
-  btn.textContent =
-    count > 0
-      ? `Complete Selected (${count})`
-      : "Complete Selected";
 }
 
 /* =====================================================
    PRODUCTS TAB
 
-   THIS IS THE MAIN WORK SCREEN.
+   TYPE -> MATCH -> +/- -> DONE
 ===================================================== */
 
 function renderProducts() {
-  const host =
-    $("#productList");
+  const host = $("#productList");
 
   if (!host) return;
 
   host.innerHTML = "";
 
-  /*
-    If user types something in Product box,
-    filter the Store Products list.
-  */
-  const searchText =
-    ($("#productName")?.value || "")
+  const input = $("#productName");
+
+  const query =
+    (input?.value || "")
       .trim()
       .toLowerCase();
 
-  const visibleProducts =
-    searchText
-      ? products.filter((p) =>
-          p.name
-            .toLowerCase()
-            .includes(searchText)
-        )
-      : products;
+  const empty = $("#productEmpty");
 
-  if ($("#productEmpty")) {
-    $("#productEmpty").classList.toggle(
-      "hidden",
-      visibleProducts.length > 0
-    );
+  /*
+    Nothing typed:
+    do NOT show giant product database.
+  */
+  if (!query) {
+    if (empty) {
+      empty.classList.remove("hidden");
 
-    if (
-      !visibleProducts.length &&
-      searchText
-    ) {
-      $("#productEmpty").textContent =
-        "No matching product found.";
-    } else {
-      $("#productEmpty").textContent =
-        "No products added yet.";
+      empty.textContent =
+        "Type a product name above to start an order.";
     }
+
+    return;
   }
 
-  visibleProducts.forEach(
-    (product) => {
-      const active =
-        activeOrderFor(product.id);
-
-      /*
-        If another user changed this item
-        after our local draft was already
-        confirmed, reset draft to current
-        database qty whenever it is not dirty.
-      */
-      if (!draftQty.has(product.id)) {
-        draftQty.set(
-          product.id,
-          active
-            ? Math.max(
-                0,
-                Number(active.quantity) || 0
-              )
-            : 0
-        );
-      }
-
-      const row =
-        document.createElement("div");
-
-      row.className =
-        "product-row";
-
-      const body =
-        document.createElement("div");
-
-      const title =
-        document.createElement("div");
-
-      title.className =
-        "item-title";
-
-      title.textContent =
-        product.name;
-
-      const meta =
-        document.createElement("div");
-
-      meta.className = "meta";
-
-      meta.textContent =
-        active
-          ? `Current order qty ${Math.max(
-              0,
-              Number(active.quantity) || 0
-            )}`
-          : "Not on current order";
-
-      body.append(
-        title,
-        meta
-      );
-
-      /*
-        Quantity editing controls
-      */
-      const actions =
-        document.createElement("div");
-
-      actions.className =
-        "product-actions";
-
-      const qtyControls =
-        document.createElement("div");
-
-      qtyControls.className =
-        "qty-controls";
-
-      const minus =
-        document.createElement("button");
-
-      const qty =
-        document.createElement("span");
-
-      const plus =
-        document.createElement("button");
-
-      minus.type = "button";
-      plus.type = "button";
-
-      minus.className = "mini";
-      plus.className = "mini";
-
-      minus.textContent = "−";
-      plus.textContent = "+";
-
-      const currentDraft =
-        Math.max(
-          0,
-          Number(
-            draftQty.get(product.id)
-          ) || 0
-        );
-
-      qty.className = "qty-pill";
-      qty.textContent =
-        `Qty ${currentDraft}`;
-
-      minus.addEventListener(
-        "click",
-        () => {
-          const n =
-            Math.max(
-              0,
-              (Number(
-                draftQty.get(
-                  product.id
-                )
-              ) || 0) - 1
-            );
-
-          draftQty.set(
-            product.id,
-            n
-          );
-
-          renderProducts();
-        }
-      );
-
-      plus.addEventListener(
-        "click",
-        () => {
-          const n =
-            Math.min(
-              999,
-              (Number(
-                draftQty.get(
-                  product.id
-                )
-              ) || 0) + 1
-            );
-
-          draftQty.set(
-            product.id,
-            n
-          );
-
-          renderProducts();
-        }
-      );
-
-      qtyControls.append(
-        minus,
-        qty,
-        plus
-      );
-
-      /*
-        DONE confirms this quantity into
-        Current Orders.
-
-        If current order already exists,
-        Done updates it instead of creating
-        duplicate.
-      */
-      const done = button(
-        "Done",
-        "primary",
-        async () => {
-          await confirmProductOrder(
-            product
-          );
-        }
-      );
-
-      /*
-        New item must be at least Qty 1.
-
-        Existing current order may be
-        confirmed at Qty 0 if user wants
-        to keep it pending.
-      */
-      if (
-        !active &&
-        currentDraft === 0
-      ) {
-        done.disabled = true;
-      }
-
-      const edit = button(
-        "Edit",
-        "mini",
-        () =>
-          editProduct(product)
-      );
-
-      const remove = button(
-        "Delete",
-        "mini delete",
-        () =>
-          deleteProduct(product)
-      );
-
-      actions.append(
-        qtyControls,
-        done,
-        edit,
-        remove
-      );
-
-      row.append(
-        body,
-        actions
-      );
-
-      host.append(row);
-    }
+  /*
+    Find matching products while typing.
+  */
+  const matches = products.filter((p) =>
+    p.name
+      .toLowerCase()
+      .includes(query)
   );
+
+  if (!matches.length) {
+    if (empty) {
+      empty.classList.remove("hidden");
+
+      empty.textContent =
+        "No matching product. Use Add new product if this is a new item.";
+    }
+
+    return;
+  }
+
+  if (empty) {
+    empty.classList.add("hidden");
+  }
+
+  matches.forEach((product) => {
+    renderProductResult(
+      host,
+      product
+    );
+  });
 }
 
-/* =====================================================
-   PRODUCT SEARCH
+function renderProductResult(host, product) {
+  const active =
+    activeOrderFor(product.id);
 
-   As user types ZYN / Marlboro / etc,
-   matching Store Products immediately show.
-===================================================== */
+  /*
+    Current database quantity.
+    If not currently ordered -> 0.
+  */
+  const databaseQty =
+    active
+      ? Math.max(
+          0,
+          Number(active.quantity) || 0
+        )
+      : 0;
 
-if ($("#productName")) {
-  $("#productName").addEventListener(
-    "input",
+  /*
+    Initialize draft only once.
+  */
+  if (!draftQty.has(product.id)) {
+    draftQty.set(
+      product.id,
+      databaseQty
+    );
+  }
+
+  const row =
+    document.createElement("div");
+
+  row.className = "product-row";
+
+  const body =
+    document.createElement("div");
+
+  const title =
+    document.createElement("div");
+
+  title.className = "item-title";
+  title.textContent = product.name;
+
+  const meta =
+    document.createElement("div");
+
+  meta.className = "meta";
+
+  meta.textContent = active
+    ? `Current order: Qty ${databaseQty}`
+    : "Not currently on order";
+
+  body.append(
+    title,
+    meta
+  );
+
+  const actions =
+    document.createElement("div");
+
+  actions.className =
+    "product-actions";
+
+  const qtyControls =
+    document.createElement("div");
+
+  qtyControls.className =
+    "qty-controls";
+
+  const minus =
+    document.createElement("button");
+
+  const qty =
+    document.createElement("span");
+
+  const plus =
+    document.createElement("button");
+
+  minus.type = "button";
+  plus.type = "button";
+
+  minus.className = "mini";
+  plus.className = "mini";
+
+  minus.textContent = "−";
+  plus.textContent = "+";
+
+  const currentDraft =
+    Math.max(
+      0,
+      Number(
+        draftQty.get(product.id)
+      ) || 0
+    );
+
+  qty.className = "qty-pill";
+  qty.textContent =
+    `Qty ${currentDraft}`;
+
+  minus.addEventListener(
+    "click",
     () => {
+      const old =
+        Number(
+          draftQty.get(product.id)
+        ) || 0;
+
+      const next =
+        Math.max(0, old - 1);
+
+      draftQty.set(
+        product.id,
+        next
+      );
+
       renderProducts();
     }
   );
+
+  plus.addEventListener(
+    "click",
+    () => {
+      const old =
+        Number(
+          draftQty.get(product.id)
+        ) || 0;
+
+      const next =
+        Math.min(999, old + 1);
+
+      draftQty.set(
+        product.id,
+        next
+      );
+
+      renderProducts();
+    }
+  );
+
+  qtyControls.append(
+    minus,
+    qty,
+    plus
+  );
+
+  const done = button(
+    "Done",
+    "primary",
+    async () => {
+      await confirmProductOrder(product);
+    }
+  );
+
+  /*
+    New/currently absent product cannot
+    be sent to Current Orders at Qty 0.
+
+    BUT once it is already on Current Orders,
+    Qty 0 IS allowed and remains pending.
+  */
+  if (!active && currentDraft === 0) {
+    done.disabled = true;
+  }
+
+  const edit = button(
+    "Edit",
+    "mini",
+    () => editProduct(product)
+  );
+
+  const remove = button(
+    "Delete",
+    "mini delete",
+    () => deleteProduct(product)
+  );
+
+  actions.append(
+    qtyControls,
+    done,
+    edit,
+    remove
+  );
+
+  row.append(
+    body,
+    actions
+  );
+
+  host.append(row);
 }
 
 /* =====================================================
-   DONE / CONFIRM PRODUCT QUANTITY
+   LIVE PRODUCT SEARCH
+===================================================== */
+
+if ($("#productName")) {
+  $("#productName")
+    .addEventListener(
+      "input",
+      () => {
+        /*
+          A different search should initialize
+          from current database quantity.
+        */
+        renderProducts();
+      }
+    );
+}
+
+/* =====================================================
+   DONE PRODUCT
+
+   Add/update Current Orders.
 ===================================================== */
 
 async function confirmProductOrder(product) {
@@ -892,8 +634,10 @@ async function confirmProductOrder(product) {
     activeOrderFor(product.id);
 
   /*
-    Existing Current Order:
-    update its quantity.
+    EXISTING CURRENT ORDER
+
+    Qty 0 is valid here.
+    Item remains in Current Orders.
   */
   if (active) {
     const { error } =
@@ -917,35 +661,33 @@ async function confirmProductOrder(product) {
 
     msg(
       $("#productMessage"),
-      `${product.name} current order updated to Qty ${quantity}.`
+      `${product.name} updated to Qty ${quantity}.`
     );
 
-    /*
-      Reset local draft to exactly
-      what was confirmed.
-    */
-    draftQty.set(
-      product.id,
-      quantity
-    );
+    draftQty.delete(product.id);
 
     await refreshAll();
 
     /*
       Stay on Products.
+      Clear search ready for next item.
     */
-    showMain("products");
+    $("#productName").value = "";
+
+    renderProducts();
 
     return;
   }
 
   /*
-    New Current Order cannot start at zero.
+    NEW CURRENT ORDER
+
+    Need at least Qty 1 initially.
   */
   if (quantity <= 0) {
     msg(
       $("#productMessage"),
-      "Set the quantity before pressing Done."
+      "Set quantity before pressing Done."
     );
 
     return;
@@ -990,144 +732,148 @@ async function confirmProductOrder(product) {
     `${product.name} added to Current Orders — Qty ${quantity}.`
   );
 
-  draftQty.set(
-    product.id,
-    quantity
-  );
+  draftQty.delete(product.id);
 
   await refreshAll();
 
   /*
-    User remains on Products page
-    to make another order.
+    Products stays HOME.
+    Search clears for next product.
   */
-  showMain("products");
+  $("#productName").value = "";
+
+  renderProducts();
 }
 
 /* =====================================================
-   COMPLETE SELECTED
+   ADD NEW PRODUCT
 
-   ONE CLICK = ONE HISTORY BATCH
+   No Usual Qty concept.
 ===================================================== */
 
-async function completeSelectedOrders() {
-  if (!isSenior()) {
+$("#productForm").addEventListener(
+  "submit",
+  async (e) => {
+    e.preventDefault();
+
+    msg($("#productMessage"));
+
+    const name =
+      $("#productName")
+        .value
+        .trim();
+
+    if (!name) {
+      msg(
+        $("#productMessage"),
+        "Enter a product name."
+      );
+
+      return;
+    }
+
+    /*
+      Prevent duplicate product names.
+    */
+    const existing =
+      products.find(
+        (p) =>
+          p.name
+            .trim()
+            .toLowerCase() ===
+          name.toLowerCase()
+      );
+
+    if (existing) {
+      msg(
+        $("#productMessage"),
+        `${existing.name} already exists. Adjust its quantity below.`
+      );
+
+      draftQty.set(
+        existing.id,
+        activeOrderFor(existing.id)
+          ? Number(
+              activeOrderFor(
+                existing.id
+              ).quantity
+            ) || 0
+          : 0
+      );
+
+      renderProducts();
+
+      return;
+    }
+
+    /*
+      Database may still require
+      default_quantity column,
+      so silently save 1.
+
+      User never sees/uses it.
+    */
+    const { data, error } =
+      await supabase
+        .from("products")
+        .insert({
+          workspace_id:
+            workspace.id,
+
+          name,
+
+          default_quantity:
+            1,
+
+          created_by:
+            session.user.id,
+        })
+        .select()
+        .single();
+
+    if (error) {
+      msg(
+        $("#productMessage"),
+        error.message
+      );
+
+      return;
+    }
+
+    /*
+      Brand-new product starts at Qty 1
+      in the search result.
+
+      It is NOT Current Order yet.
+      User still presses Done.
+    */
+    draftQty.set(
+      data.id,
+      1
+    );
+
     msg(
-      $("#appMessage"),
-      "Only a manager or owner can complete an order."
+      $("#productMessage"),
+      `${name} created. Confirm quantity below and press Done.`
     );
 
-    return;
-  }
+    await refreshAll();
 
-  const selected =
-    activeOrders().filter(
-      (o) =>
-        selectedOrderIds.has(
-          o.id
-        )
-    );
-
-  if (!selected.length) {
-    msg(
-      $("#appMessage"),
-      "Select at least one item."
-    );
-
-    return;
-  }
-
-  const totalQty =
-    selected.reduce(
-      (sum, o) =>
-        sum +
-        Math.max(
-          0,
-          Number(o.quantity) || 0
-        ),
-      0
-    );
-
-  const ok =
-    window.confirm(
-      `Complete ${selected.length} product${
-        selected.length === 1
-          ? ""
-          : "s"
-      } with total quantity ${totalQty}?`
-    );
-
-  if (!ok) return;
-
-  /*
-    Every item completed in THIS click
-    receives the SAME batch ID.
-  */
-  const batchId =
-    crypto.randomUUID();
-
-  const completedAt =
-    new Date().toISOString();
-
-  const ids =
-    selected.map(
-      (o) => o.id
-    );
-
-  const { error } =
-    await supabase
-      .from("orders")
-      .update({
-        status: "completed",
-
-        completed_at:
-          completedAt,
-
-        completed_by:
-          session.user.id,
-
-        completion_batch_id:
-          batchId,
-      })
-      .in("id", ids);
-
-  if (error) {
-    msg(
-      $("#appMessage"),
-      error.message
-    );
-
-    return;
-  }
-
-  /*
-    Reset product drafts for items
-    that just left Current Order.
-  */
-  selected.forEach((order) => {
-    selectedOrderIds.delete(
-      order.id
-    );
+    /*
+      KEEP the typed name in search box,
+      so the new product appears immediately.
+    */
+    $("#productName").value =
+      name;
 
     draftQty.set(
-      order.product_id,
-      0
+      data.id,
+      1
     );
-  });
 
-  msg(
-    $("#appMessage"),
-    `Order completed: ${selected.length} product${
-      selected.length === 1
-        ? ""
-        : "s"
-    }, ${totalQty} total quantity.`
-  );
-
-  await refreshAll();
-
-  showMain("week");
-}
+    renderProducts();
+  }
+);
 
 /* =====================================================
    EDIT PRODUCT
@@ -1140,9 +886,7 @@ async function editProduct(product) {
       product.name
     );
 
-  if (newName === null) {
-    return;
-  }
+  if (newName === null) return;
 
   const cleanName =
     newName.trim();
@@ -1179,13 +923,9 @@ async function editProduct(product) {
     await supabase
       .from("products")
       .update({
-        name:
-          cleanName,
+        name: cleanName,
       })
-      .eq(
-        "id",
-        product.id
-      );
+      .eq("id", product.id);
 
   if (error) {
     msg(
@@ -1197,10 +937,9 @@ async function editProduct(product) {
   }
 
   /*
-    If product is currently pending,
-    update its current display name too.
+    Update ACTIVE order name.
 
-    Old completed history stays unchanged.
+    Completed History is NOT changed.
   */
   const active =
     activeOrderFor(product.id);
@@ -1213,10 +952,7 @@ async function editProduct(product) {
           product_name:
             cleanName,
         })
-        .eq(
-          "id",
-          active.id
-        );
+        .eq("id", active.id);
 
     if (activeError) {
       msg(
@@ -1228,50 +964,43 @@ async function editProduct(product) {
     }
   }
 
-  msg(
-    $("#productMessage"),
-    `${cleanName} updated.`
-  );
+  $("#productName").value =
+    cleanName;
 
   await refreshAll();
+  renderProducts();
 }
 
 /* =====================================================
    DELETE PRODUCT
 
-   OLD HISTORY IS PRESERVED.
+   Deletes/retire from product database.
+   Completed History remains untouched.
 ===================================================== */
 
 async function deleteProduct(product) {
   const active =
     activeOrderFor(product.id);
 
-  let text =
-    `Permanently delete ${product.name} from Store Products?`;
+  let warning =
+    `Delete ${product.name} from the product database?`;
 
   if (active) {
-    text +=
-      "\n\nThis product is also on Current Orders and will be removed from there.";
+    warning +=
+      "\n\nIt is also on Current Orders and will be removed from there.";
   }
 
   const ok =
-    window.confirm(text);
+    window.confirm(warning);
 
   if (!ok) return;
 
-  /*
-    Remove current pending order first,
-    if one exists.
-  */
   if (active) {
     const { error: orderError } =
       await supabase
         .from("orders")
         .delete()
-        .eq(
-          "id",
-          active.id
-        );
+        .eq("id", active.id);
 
     if (orderError) {
       msg(
@@ -1288,32 +1017,26 @@ async function deleteProduct(product) {
   }
 
   /*
-    Try physical delete.
+    Try permanent deletion first.
   */
   const { error } =
     await supabase
       .from("products")
       .delete()
-      .eq(
-        "id",
-        product.id
-      );
+      .eq("id", product.id);
 
+  /*
+    If database relationship blocks delete,
+    retire/hide product instead.
+  */
   if (error) {
-    /*
-      If FK prevents physical deletion,
-      hide/retire product instead.
-    */
     const { error: softError } =
       await supabase
         .from("products")
         .update({
           active: false,
         })
-        .eq(
-          "id",
-          product.id
-        );
+        .eq("id", product.id);
 
     if (softError) {
       msg(
@@ -1325,24 +1048,362 @@ async function deleteProduct(product) {
     }
   }
 
-  draftQty.delete(
-    product.id
-  );
+  draftQty.delete(product.id);
+
+  $("#productName").value = "";
 
   msg(
     $("#productMessage"),
-    `${product.name} deleted from Store Products.`
+    `${product.name} removed.`
   );
 
   await refreshAll();
 }
 
 /* =====================================================
+   CURRENT ORDERS
+
+   REVIEW ONLY:
+   checkbox + product + quantity
+
+   NO + / -
+===================================================== */
+
+function renderCurrentOrders() {
+  const host = $("#weekList");
+
+  if (!host) return;
+
+  host.innerHTML = "";
+
+  /*
+    Remove old Complete Selected button
+    before rebuilding screen.
+  */
+  const oldBtn =
+    $("#completeOrderBtn");
+
+  if (oldBtn) {
+    oldBtn.remove();
+  }
+
+  const active =
+    [...activeOrders()].sort(
+      (a, b) =>
+        String(
+          a.product_name || ""
+        ).localeCompare(
+          String(
+            b.product_name || ""
+          )
+        )
+    );
+
+  const empty =
+    $("#weekEmpty");
+
+  if (!active.length) {
+    if (empty) {
+      empty.classList.remove(
+        "hidden"
+      );
+
+      const h =
+        empty.querySelector("h3");
+
+      const p =
+        empty.querySelector("p");
+
+      if (h) {
+        h.textContent =
+          "No items in current order";
+      }
+
+      if (p) {
+        p.textContent =
+          "Go to Products to build the current order.";
+      }
+    }
+
+    return;
+  }
+
+  if (empty) {
+    empty.classList.add("hidden");
+  }
+
+  active.forEach((order) => {
+    const row =
+      document.createElement("div");
+
+    row.className =
+      "order-row";
+
+    const check =
+      document.createElement("input");
+
+    check.type =
+      "checkbox";
+
+    check.className =
+      "check";
+
+    check.checked =
+      selectedOrderIds.has(
+        order.id
+      );
+
+    check.setAttribute(
+      "aria-label",
+      `Select ${order.product_name}`
+    );
+
+    check.addEventListener(
+      "change",
+      () => {
+        if (check.checked) {
+          selectedOrderIds.add(
+            order.id
+          );
+        } else {
+          selectedOrderIds.delete(
+            order.id
+          );
+        }
+
+        updateCompleteSelectedButton();
+      }
+    );
+
+    const body =
+      document.createElement("div");
+
+    const title =
+      document.createElement("div");
+
+    title.className =
+      "item-title";
+
+    title.textContent =
+      order.product_name;
+
+    const qty =
+      document.createElement("div");
+
+    qty.className = "meta";
+
+    qty.textContent =
+      `Qty ${Math.max(
+        0,
+        Number(
+          order.quantity
+        ) || 0
+      )}`;
+
+    body.append(
+      title,
+      qty
+    );
+
+    row.append(
+      check,
+      body
+    );
+
+    host.append(row);
+  });
+
+  /*
+    Complete Selected goes AFTER all products.
+  */
+  ensureCompleteSelectedButton();
+}
+
+/* =====================================================
+   COMPLETE SELECTED BUTTON
+===================================================== */
+
+function ensureCompleteSelectedButton() {
+  const host =
+    $("#weekList");
+
+  if (!host) return;
+
+  if (!isSenior()) {
+    return;
+  }
+
+  const btn =
+    document.createElement("button");
+
+  btn.id =
+    "completeOrderBtn";
+
+  btn.type =
+    "button";
+
+  btn.className =
+    "primary";
+
+  btn.addEventListener(
+    "click",
+    completeSelectedOrders
+  );
+
+  /*
+    Put button AFTER product list.
+  */
+  host.parentElement.append(
+    btn
+  );
+
+  updateCompleteSelectedButton();
+}
+
+function updateCompleteSelectedButton() {
+  const btn =
+    $("#completeOrderBtn");
+
+  if (!btn) return;
+
+  const count =
+    selectedOrderIds.size;
+
+  btn.disabled =
+    count === 0;
+
+  btn.textContent =
+    count
+      ? `Complete Selected (${count})`
+      : "Complete Selected";
+}
+
+/* =====================================================
+   COMPLETE SELECTED ORDER BATCH
+===================================================== */
+
+async function completeSelectedOrders() {
+  if (!isSenior()) {
+    msg(
+      $("#appMessage"),
+      "Only a manager or owner can complete an order."
+    );
+
+    return;
+  }
+
+  const selected =
+    activeOrders().filter(
+      (o) =>
+        selectedOrderIds.has(
+          o.id
+        )
+    );
+
+  if (!selected.length) {
+    msg(
+      $("#appMessage"),
+      "Select at least one product."
+    );
+
+    return;
+  }
+
+  const totalQty =
+    selected.reduce(
+      (sum, order) =>
+        sum +
+        Math.max(
+          0,
+          Number(
+            order.quantity
+          ) || 0
+        ),
+      0
+    );
+
+  const ok =
+    window.confirm(
+      `Complete ${selected.length} product${
+        selected.length === 1
+          ? ""
+          : "s"
+      } with total quantity ${totalQty}?`
+    );
+
+  if (!ok) return;
+
+  /*
+    Same Batch ID for everything selected
+    in THIS completion click.
+  */
+  const batchId =
+    crypto.randomUUID();
+
+  const completedAt =
+    new Date().toISOString();
+
+  const ids =
+    selected.map(
+      (o) => o.id
+    );
+
+  const { error } =
+    await supabase
+      .from("orders")
+      .update({
+        status:
+          "completed",
+
+        completed_at:
+          completedAt,
+
+        completed_by:
+          session.user.id,
+
+        completion_batch_id:
+          batchId,
+      })
+      .in("id", ids);
+
+  if (error) {
+    msg(
+      $("#appMessage"),
+      error.message
+    );
+
+    return;
+  }
+
+  selected.forEach((order) => {
+    selectedOrderIds.delete(
+      order.id
+    );
+
+    draftQty.delete(
+      order.product_id
+    );
+  });
+
+  msg(
+    $("#appMessage"),
+    `Order completed: ${selected.length} product${
+      selected.length === 1
+        ? ""
+        : "s"
+    }, ${totalQty} total quantity.`
+  );
+
+  await refreshAll();
+
+  showMain("week");
+}
+
+/* =====================================================
    HISTORY
 
-   DATE
-     -> COMPLETION BATCH
-       -> PRODUCTS
+   KEEP CURRENT WORKING STRUCTURE:
+   DATE -> BATCH -> PRODUCTS
 ===================================================== */
 
 function renderHistory() {
@@ -1368,8 +1429,11 @@ function renderHistory() {
         )
     );
 
-  if ($("#historyEmpty")) {
-    $("#historyEmpty").classList.toggle(
+  const empty =
+    $("#historyEmpty");
+
+  if (empty) {
+    empty.classList.toggle(
       "hidden",
       history.length > 0
     );
@@ -1380,7 +1444,7 @@ function renderHistory() {
   }
 
   /*
-    First group by completed local DATE.
+    DATE GROUPS
   */
   const dateGroups =
     new Map();
@@ -1413,247 +1477,193 @@ function renderHistory() {
   });
 
   const dates =
-    [...dateGroups.keys()].sort(
-      (a, b) =>
-        parseDateKey(b) -
-        parseDateKey(a)
+    [...dateGroups.keys()]
+      .sort(
+        (a, b) =>
+          parseDateKey(b) -
+          parseDateKey(a)
+      );
+
+  dates.forEach((dateKey) => {
+    const dateOrders =
+      dateGroups.get(
+        dateKey
+      );
+
+    const dayFolder =
+      document.createElement(
+        "details"
+      );
+
+    dayFolder.className =
+      "history-day";
+
+    const daySummary =
+      document.createElement(
+        "summary"
+      );
+
+    daySummary.className =
+      "history-day-summary";
+
+    daySummary.textContent =
+      fmtDate(dateKey);
+
+    dayFolder.append(
+      daySummary
     );
 
-  dates.forEach(
-    (dateKey) => {
-      const dateOrders =
-        dateGroups.get(dateKey);
+    /*
+      BATCH GROUPS
+    */
+    const batches =
+      new Map();
 
-      /*
-        Outer collapsible DATE folder
-      */
-      const dayFolder =
+    dateOrders.forEach((order) => {
+      const batchKey =
+        order.completion_batch_id ||
+        `old-${order.id}`;
+
+      if (!batches.has(batchKey)) {
+        batches.set(
+          batchKey,
+          []
+        );
+      }
+
+      batches
+        .get(batchKey)
+        .push(order);
+    });
+
+    const batchList =
+      [...batches.values()]
+        .sort(
+          (a, b) =>
+            new Date(
+              b[0].completed_at ||
+                b[0].created_at
+            ) -
+            new Date(
+              a[0].completed_at ||
+                a[0].created_at
+            )
+        );
+
+    batchList.forEach((batch) => {
+      const productCount =
+        batch.length;
+
+      const totalQty =
+        batch.reduce(
+          (sum, order) =>
+            sum +
+            Math.max(
+              0,
+              Number(
+                order.quantity
+              ) || 0
+            ),
+          0
+        );
+
+      const completedAt =
+        batch[0].completed_at ||
+        batch[0].created_at;
+
+      const batchFolder =
         document.createElement(
           "details"
         );
 
-      dayFolder.className =
-        "history-day";
+      batchFolder.className =
+        "history-batch";
 
-      const daySummary =
+      const summary =
         document.createElement(
           "summary"
         );
 
-      daySummary.className =
-        "history-day-summary";
+      summary.className =
+        "history-batch-summary";
 
-      daySummary.textContent =
-        fmtDate(dateKey);
+      const time =
+        fmtTime(completedAt);
+
+      summary.textContent =
+        `Order completed — ${productCount} product${
+          productCount === 1
+            ? ""
+            : "s"
+        } — ${totalQty} quantit${
+          totalQty === 1
+            ? "y"
+            : "ies"
+        }${
+          time
+            ? ` — ${time}`
+            : ""
+        }`;
+
+      batchFolder.append(
+        summary
+      );
+
+      batch.forEach((order) => {
+        const row =
+          document.createElement(
+            "div"
+          );
+
+        row.className =
+          "history-row";
+
+        const title =
+          document.createElement(
+            "div"
+          );
+
+        title.className =
+          "history-date";
+
+        title.textContent =
+          order.product_name;
+
+        const qty =
+          document.createElement(
+            "div"
+          );
+
+        qty.className =
+          "history-qty";
+
+        qty.textContent =
+          `Qty ${Math.max(
+            0,
+            Number(
+              order.quantity
+            ) || 0
+          )}`;
+
+        row.append(
+          title,
+          qty
+        );
+
+        batchFolder.append(
+          row
+        );
+      });
 
       dayFolder.append(
-        daySummary
+        batchFolder
       );
+    });
 
-      /*
-        Inside date:
-        group by completion_batch_id.
-
-        Old history records that existed
-        before batch IDs were introduced
-        get their own fallback grouping.
-      */
-      const batches =
-        new Map();
-
-      dateOrders.forEach(
-        (order) => {
-          const key =
-            order.completion_batch_id ||
-            `old-${order.id}`;
-
-          if (!batches.has(key)) {
-            batches.set(
-              key,
-              []
-            );
-          }
-
-          batches
-            .get(key)
-            .push(order);
-        }
-      );
-
-      /*
-        Sort batches newest first.
-      */
-      const batchList =
-        [...batches.values()]
-          .sort(
-            (a, b) =>
-              new Date(
-                b[0]
-                  .completed_at ||
-                  b[0]
-                    .created_at
-              ) -
-              new Date(
-                a[0]
-                  .completed_at ||
-                  a[0]
-                    .created_at
-              )
-          );
-
-      batchList.forEach(
-        (batch) => {
-          const productCount =
-            batch.length;
-
-          const totalQty =
-            batch.reduce(
-              (sum, order) =>
-                sum +
-                Math.max(
-                  0,
-                  Number(
-                    order.quantity
-                  ) || 0
-                ),
-              0
-            );
-
-          const completedAt =
-            batch[0]
-              .completed_at ||
-            batch[0]
-              .created_at;
-
-          /*
-            Each completion batch is
-            also expandable.
-          */
-          const batchFolder =
-            document.createElement(
-              "details"
-            );
-
-          batchFolder.className =
-            "history-batch";
-
-          const summary =
-            document.createElement(
-              "summary"
-            );
-
-          summary.className =
-            "history-batch-summary";
-
-          const time =
-            fmtTime(
-              completedAt
-            );
-
-          summary.textContent =
-            `Order completed — ${productCount} product${
-              productCount === 1
-                ? ""
-                : "s"
-            } — ${totalQty} quantit${
-              totalQty === 1
-                ? "y"
-                : "ies"
-            }${
-              time
-                ? ` — ${time}`
-                : ""
-            }`;
-
-          batchFolder.append(
-            summary
-          );
-
-          batch.forEach(
-            (order) => {
-              const row =
-                document.createElement(
-                  "div"
-                );
-
-              row.className =
-                "history-row";
-
-              const title =
-                document.createElement(
-                  "div"
-                );
-
-              title.className =
-                "history-date";
-
-              title.textContent =
-                order.product_name;
-
-              const qty =
-                document.createElement(
-                  "div"
-                );
-
-              qty.className =
-                "history-qty";
-
-              qty.textContent =
-                `Qty ${Math.max(
-                  0,
-                  Number(
-                    order.quantity
-                  ) || 0
-                )}`;
-
-              row.append(
-                title,
-                qty
-              );
-
-              batchFolder.append(
-                row
-              );
-            }
-          );
-
-          dayFolder.append(
-            batchFolder
-          );
-        }
-      );
-
-      host.append(
-        dayFolder
-      );
-    }
-  );
-}
-
-/* =====================================================
-   GENERIC BUTTON
-===================================================== */
-
-function button(
-  text,
-  cls,
-  fn
-) {
-  const b =
-    document.createElement(
-      "button"
+    host.append(
+      dayFolder
     );
-
-  b.type = "button";
-  b.className = cls;
-  b.textContent = text;
-
-  b.addEventListener(
-    "click",
-    fn
-  );
-
-  return b;
+  });
 }
 
 /* =====================================================
@@ -1670,12 +1680,10 @@ $("#authForm").addEventListener(
     msg($("#authMessage"));
 
     const email =
-      $("#email")
-        .value.trim();
+      $("#email").value.trim();
 
     const password =
-      $("#password")
-        .value;
+      $("#password").value;
 
     const { data, error } =
       await supabase.auth
@@ -1710,12 +1718,10 @@ $("#signUpBtn").addEventListener(
     if (!supabase) return;
 
     const email =
-      $("#email")
-        .value.trim();
+      $("#email").value.trim();
 
     const password =
-      $("#password")
-        .value;
+      $("#password").value;
 
     if (
       !email ||
@@ -1730,11 +1736,10 @@ $("#signUpBtn").addEventListener(
     }
 
     const { data, error } =
-      await supabase.auth
-        .signUp({
-          email,
-          password,
-        });
+      await supabase.auth.signUp({
+        email,
+        password,
+      });
 
     if (error) {
       msg(
@@ -1763,171 +1768,66 @@ $("#signUpBtn").addEventListener(
    WORKSPACE
 ===================================================== */
 
-$("#createWorkspaceForm")
-  .addEventListener(
-    "submit",
-    async (e) => {
-      e.preventDefault();
-
-      const name =
-        $("#workspaceName")
-          .value.trim();
-
-      const { error } =
-        await supabase.rpc(
-          "create_workspace",
-          {
-            p_name: name,
-          }
-        );
-
-      if (error) {
-        msg(
-          $("#workspaceMessage"),
-          error.message
-        );
-
-        return;
-      }
-
-      await loadWorkspace();
-    }
-  );
-
-$("#joinWorkspaceForm")
-  .addEventListener(
-    "submit",
-    async (e) => {
-      e.preventDefault();
-
-      const code =
-        $("#inviteCode")
-          .value
-          .trim()
-          .toUpperCase();
-
-      const { error } =
-        await supabase.rpc(
-          "join_workspace",
-          {
-            p_invite_code:
-              code,
-          }
-        );
-
-      if (error) {
-        msg(
-          $("#workspaceMessage"),
-          error.message
-        );
-
-        return;
-      }
-
-      await loadWorkspace();
-    }
-  );
-
-/* =====================================================
-   ADD NEW STORE PRODUCT
-
-   "Usual Qty" is NO LONGER USED.
-
-   default_quantity = 1 is kept silently only
-   for compatibility with the existing database
-   if that column is still required.
-===================================================== */
-
-$("#productForm").addEventListener(
+$("#createWorkspaceForm").addEventListener(
   "submit",
   async (e) => {
     e.preventDefault();
 
-    msg($("#productMessage"));
-
     const name =
-      $("#productName")
+      $("#workspaceName")
         .value.trim();
 
-    if (!name) {
-      msg(
-        $("#productMessage"),
-        "Enter a product name."
-      );
-
-      return;
-    }
-
-    const duplicate =
-      products.find(
-        (p) =>
-          p.name
-            .trim()
-            .toLowerCase() ===
-          name.toLowerCase()
-      );
-
-    if (duplicate) {
-      /*
-        Existing item:
-        do NOT create another copy.
-
-        Keep search text so user sees
-        the existing product below.
-      */
-      msg(
-        $("#productMessage"),
-        `${duplicate.name} already exists. Adjust its quantity below.`
-      );
-
-      renderProducts();
-      return;
-    }
-
     const { error } =
-      await supabase
-        .from("products")
-        .insert({
-          workspace_id:
-            workspace.id,
-
-          name,
-
-          /*
-            Compatibility only.
-            Not used by app workflow.
-          */
-          default_quantity:
-            1,
-
-          created_by:
-            session.user.id,
-        });
+      await supabase.rpc(
+        "create_workspace",
+        {
+          p_name: name,
+        }
+      );
 
     if (error) {
       msg(
-        $("#productMessage"),
+        $("#workspaceMessage"),
         error.message
       );
 
       return;
     }
 
-    /*
-      Clear search after genuinely
-      creating new product.
-    */
-    $("#productName").value =
-      "";
+    await loadWorkspace();
+  }
+);
 
-    if ($("#defaultQty")) {
-      $("#defaultQty").value =
-        "1";
+$("#joinWorkspaceForm").addEventListener(
+  "submit",
+  async (e) => {
+    e.preventDefault();
+
+    const code =
+      $("#inviteCode")
+        .value
+        .trim()
+        .toUpperCase();
+
+    const { error } =
+      await supabase.rpc(
+        "join_workspace",
+        {
+          p_invite_code:
+            code,
+        }
+      );
+
+    if (error) {
+      msg(
+        $("#workspaceMessage"),
+        error.message
+      );
+
+      return;
     }
 
-    await refreshAll();
-
-    showMain("products");
+    await loadWorkspace();
   }
 );
 
@@ -1964,20 +1864,18 @@ $("#demoBtn").addEventListener(
               name.toLowerCase()
             )
         )
-        .map(
-          (name) => ({
-            workspace_id:
-              workspace.id,
+        .map((name) => ({
+          workspace_id:
+            workspace.id,
 
-            name,
+          name,
 
-            default_quantity:
-              1,
+          default_quantity:
+            1,
 
-            created_by:
-              session.user.id,
-          })
-        );
+          created_by:
+            session.user.id,
+        }));
 
     if (!rows.length) {
       msg(
@@ -2010,15 +1908,14 @@ $("#demoBtn").addEventListener(
    TABS
 ===================================================== */
 
-$$(".main-tab").forEach(
-  (btn) =>
-    btn.addEventListener(
-      "click",
-      () =>
-        showMain(
-          btn.dataset.screen
-        )
-    )
+$$(".main-tab").forEach((btn) =>
+  btn.addEventListener(
+    "click",
+    () =>
+      showMain(
+        btn.dataset.screen
+      )
+  )
 );
 
 function showMain(name) {
@@ -2040,70 +1937,52 @@ function showMain(name) {
       name !== "history"
     );
 
-  $$(".main-tab").forEach(
-    (b) =>
-      b.classList.toggle(
-        "active",
-        b.dataset.screen === name
-      )
+  $$(".main-tab").forEach((b) =>
+    b.classList.toggle(
+      "active",
+      b.dataset.screen === name
+    )
   );
 
-  /*
-    When opening Products,
-    synchronize drafts with current DB qty
-    unless user is actively searching.
-  */
   if (name === "products") {
-    products.forEach(
-      (product) => {
-        const active =
-          activeOrderFor(
-            product.id
-          );
-
-        draftQty.set(
-          product.id,
-          active
-            ? Math.max(
-                0,
-                Number(
-                  active.quantity
-                ) || 0
-              )
-            : 0
-        );
-      }
-    );
+    /*
+      Re-sync drafts from Current Orders
+      when returning to Products.
+    */
+    draftQty.clear();
 
     renderProducts();
+  }
+
+  if (name === "week") {
+    renderCurrentOrders();
+  }
+
+  if (name === "history") {
+    renderHistory();
   }
 }
 
 /* =====================================================
-   EMPTY CURRENT ORDER -> PRODUCTS
+   GO PRODUCTS
 ===================================================== */
 
-$("#goProductsBtn")
-  .addEventListener(
-    "click",
-    () => {
-      showMain(
-        "products"
-      );
-    }
-  );
+$("#goProductsBtn").addEventListener(
+  "click",
+  () =>
+    showMain("products")
+);
 
 /* =====================================================
    INVITE
 ===================================================== */
 
-$("#inviteBtn")
-  .addEventListener(
-    "click",
-    () =>
-      $("#inviteDialog")
-        .showModal()
-  );
+$("#inviteBtn").addEventListener(
+  "click",
+  () =>
+    $("#inviteDialog")
+      .showModal()
+);
 
 /* =====================================================
    SIGN OUT
@@ -2111,14 +1990,12 @@ $("#inviteBtn")
 
 async function signOut() {
   if (channel) {
-    await supabase
-      .removeChannel(
-        channel
-      );
+    await supabase.removeChannel(
+      channel
+    );
   }
 
-  await supabase.auth
-    .signOut();
+  await supabase.auth.signOut();
 
   session = null;
   workspace = null;
@@ -2133,31 +2010,26 @@ async function signOut() {
   setScreen("auth");
 }
 
-$("#signOutBtn")
-  .addEventListener(
-    "click",
-    signOut
-  );
+$("#signOutBtn").addEventListener(
+  "click",
+  signOut
+);
 
-$("#workspaceSignOut")
-  .addEventListener(
-    "click",
-    signOut
-  );
+$("#workspaceSignOut").addEventListener(
+  "click",
+  signOut
+);
 
 if (supabase) {
-  supabase.auth
-    .onAuthStateChange(
-      (_event, s) => {
-        session = s;
+  supabase.auth.onAuthStateChange(
+    (_event, s) => {
+      session = s;
 
-        if (!s) {
-          setScreen(
-            "auth"
-          );
-        }
+      if (!s) {
+        setScreen("auth");
       }
-    );
+    }
+  );
 }
 
 /* =====================================================
