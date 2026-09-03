@@ -93,6 +93,14 @@
             Create account
           </button>
 
+          <button
+            id="forgotPasswordBtn"
+            class="ghost"
+            type="button"
+          >
+            Forgot password?
+          </button>
+
         </div>
 
         <p
@@ -634,6 +642,61 @@
       ></p>
 
     </section>
+
+
+    <!-- =========================================
+         RESET PASSWORD DIALOG
+    ========================================== -->
+
+    <dialog id="resetPasswordDialog">
+
+      <form id="resetPasswordForm" class="dialog-card stack">
+
+        <p class="eyebrow">Account recovery</p>
+
+        <h2>Create a new password</h2>
+
+        <p class="muted">
+          Enter a new password for your Store Orders account.
+        </p>
+
+        <label>
+          New password
+
+          <input
+            id="newPassword"
+            type="password"
+            minlength="6"
+            autocomplete="new-password"
+            required
+          />
+        </label>
+
+        <label>
+          Confirm new password
+
+          <input
+            id="confirmNewPassword"
+            type="password"
+            minlength="6"
+            autocomplete="new-password"
+            required
+          />
+        </label>
+
+        <button class="primary" type="submit">
+          Save new password
+        </button>
+
+        <p
+          id="resetPasswordMessage"
+          class="message"
+          aria-live="polite"
+        ></p>
+
+      </form>
+
+    </dialog>
 
 
     <!-- =========================================

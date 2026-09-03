@@ -2086,6 +2086,113 @@ $("#signUpBtn")?.addEventListener(
   }
 );
 
+$("#forgotPasswordBtn")?.addEventListener(
+  "click",
+  async () => {
+    if (!supabase) return;
+
+    const email = $("#email").value.trim();
+
+    if (!email) {
+      msg(
+        $("#authMessage"),
+        "Enter your email address first."
+      );
+      $("#email")?.focus();
+      return;
+    }
+
+    msg($("#authMessage"), "Sending reset email...");
+
+    const redirectTo =
+      `${window.location.origin}${window.location.pathname}`;
+
+    const { error } =
+      await supabase.auth.resetPasswordForEmail(
+        email,
+        { redirectTo }
+      );
+
+    if (error) {
+      msg($("#authMessage"), error.message);
+      return;
+    }
+
+    msg(
+      $("#authMessage"),
+      "Password reset email sent. Open the newest email and use its link once."
+    );
+  }
+);
+
+function showResetPasswordDialog() {
+  msg($("#resetPasswordMessage"));
+  $("#newPassword").value = "";
+  $("#confirmNewPassword").value = "";
+
+  const dialog = $("#resetPasswordDialog");
+
+  if (dialog && !dialog.open) {
+    dialog.showModal();
+  }
+
+  window.setTimeout(
+    () => $("#newPassword")?.focus(),
+    0
+  );
+}
+
+$("#resetPasswordForm")?.addEventListener(
+  "submit",
+  async (event) => {
+    event.preventDefault();
+
+    const password = $("#newPassword").value;
+    const confirmation = $("#confirmNewPassword").value;
+
+    if (password.length < 6) {
+      msg(
+        $("#resetPasswordMessage"),
+        "Password must be at least 6 characters."
+      );
+      return;
+    }
+
+    if (password !== confirmation) {
+      msg(
+        $("#resetPasswordMessage"),
+        "The two passwords do not match."
+      );
+      return;
+    }
+
+    const { error } =
+      await supabase.auth.updateUser({ password });
+
+    if (error) {
+      msg($("#resetPasswordMessage"), error.message);
+      return;
+    }
+
+    $("#resetPasswordDialog")?.close();
+
+    window.history.replaceState(
+      {},
+      document.title,
+      window.location.pathname
+    );
+
+    msg(
+      $("#appMessage"),
+      "Password updated successfully."
+    );
+
+    if (session) {
+      await loadWorkspace();
+    }
+  }
+);
+
 /* =====================================================
    WORKSPACE
 ===================================================== */
@@ -2320,8 +2427,16 @@ $("#workspaceSignOut")?.addEventListener(
 
 if (supabase) {
   supabase.auth.onAuthStateChange(
-    (_event, s) => {
+    (event, s) => {
       session = s;
+
+      if (event === "PASSWORD_RECOVERY") {
+        window.setTimeout(
+          showResetPasswordDialog,
+          0
+        );
+        return;
+      }
 
       if (!s) {
         setScreen("auth");
