@@ -16,10 +16,19 @@ create table if not exists public.workspace_members (
   joined_at timestamptz not null default now(),
   primary key (workspace_id,user_id)
 );
+create table if not exists public.product_families (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 60),
+  created_by uuid not null references auth.users(id),
+  created_at timestamptz not null default now(),
+  unique (workspace_id,name)
+);
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
   name text not null check (char_length(name) between 1 and 100),
+  family_id uuid references public.product_families(id) on delete set null,
   supplier text,
   reorder_weeks integer not null default 1 check (reorder_weeks between 1 and 52),
   default_quantity integer not null default 1 check (default_quantity between 1 and 999),
@@ -40,12 +49,14 @@ create table if not exists public.orders (
   updated_at timestamptz not null default now()
 );
 create index if not exists workspace_members_user_idx on public.workspace_members(user_id);
+create index if not exists product_families_workspace_idx on public.product_families(workspace_id,name);
 create index if not exists products_workspace_idx on public.products(workspace_id,active);
 create index if not exists orders_workspace_date_idx on public.orders(workspace_id,ordered_on desc);
 create index if not exists orders_product_date_idx on public.orders(product_id,ordered_on desc);
 
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
+alter table public.product_families enable row level security;
 alter table public.products enable row level security;
 alter table public.orders enable row level security;
 
@@ -60,6 +71,35 @@ drop policy if exists "members read workspaces" on public.workspaces;
 create policy "members read workspaces" on public.workspaces for select to authenticated using (public.is_workspace_member(id));
 drop policy if exists "members read memberships" on public.workspace_members;
 create policy "members read memberships" on public.workspace_members for select to authenticated using (public.is_workspace_member(workspace_id));
+
+drop policy if exists "members read product families" on public.product_families;
+create policy "members read product families" on public.product_families for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists "owners add product families" on public.product_families;
+create policy "owners add product families" on public.product_families for insert to authenticated with check (
+  created_by=auth.uid() and exists(
+    select 1 from public.workspace_members wm
+    where wm.workspace_id=product_families.workspace_id and wm.user_id=auth.uid() and wm.role='owner'
+  )
+);
+drop policy if exists "owners update product families" on public.product_families;
+create policy "owners update product families" on public.product_families for update to authenticated using (
+  exists(
+    select 1 from public.workspace_members wm
+    where wm.workspace_id=product_families.workspace_id and wm.user_id=auth.uid() and wm.role='owner'
+  )
+) with check (
+  exists(
+    select 1 from public.workspace_members wm
+    where wm.workspace_id=product_families.workspace_id and wm.user_id=auth.uid() and wm.role='owner'
+  )
+);
+drop policy if exists "owners delete product families" on public.product_families;
+create policy "owners delete product families" on public.product_families for delete to authenticated using (
+  exists(
+    select 1 from public.workspace_members wm
+    where wm.workspace_id=product_families.workspace_id and wm.user_id=auth.uid() and wm.role='owner'
+  )
+);
 
 drop policy if exists "members read products" on public.products;
 create policy "members read products" on public.products for select to authenticated using (public.is_workspace_member(workspace_id));
@@ -117,5 +157,6 @@ create trigger orders_touch_updated_at before update on public.orders for each r
 do $$
 begin
   if not exists(select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='products') then alter publication supabase_realtime add table public.products; end if;
+  if not exists(select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='product_families') then alter publication supabase_realtime add table public.product_families; end if;
   if not exists(select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='orders') then alter publication supabase_realtime add table public.orders; end if;
 end $$;

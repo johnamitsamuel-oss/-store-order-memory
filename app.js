@@ -24,6 +24,7 @@ let workspace = null;
 let memberRole = "staff";
 
 let products = [];
+let families = [];
 let orders = [];
 let channel = null;
 
@@ -126,14 +127,60 @@ function activeOrderFor(productId) {
   );
 }
 
+function familyForProduct(product) {
+  if (!product?.family_id) return null;
+
+  return (
+    families.find(
+      (family) => family.id === product.family_id
+    ) || null
+  );
+}
+
+function productForOrder(order) {
+  return (
+    products.find(
+      (product) => product.id === order.product_id
+    ) || null
+  );
+}
+
+function matchingFamilyIds(searchText) {
+  const query = normalizeName(searchText);
+  const ids = new Set();
+
+  if (!query) return ids;
+
+  families.forEach((family) => {
+    if (normalizeName(family.name).includes(query)) {
+      ids.add(family.id);
+    }
+  });
+
+  products.forEach((product) => {
+    if (
+      product.family_id &&
+      normalizeName(product.name).includes(query)
+    ) {
+      ids.add(product.family_id);
+    }
+  });
+
+  return ids;
+}
+
 function matchingProducts(searchText) {
   const query = normalizeName(searchText);
 
   if (!query) return [];
 
+  const familyIds = matchingFamilyIds(searchText);
+
   return products
-    .filter((product) =>
-      normalizeName(product.name).includes(query)
+    .filter(
+      (product) =>
+        normalizeName(product.name).includes(query) ||
+        (product.family_id && familyIds.has(product.family_id))
     )
     .sort((a, b) => {
       const aActive = !!activeOrderFor(a.id);
@@ -218,6 +265,11 @@ async function loadWorkspace() {
   workspace = data.workspaces;
   memberRole = data.role || "staff";
 
+  $("#menuBtn")?.classList.toggle(
+    "hidden",
+    !isSenior()
+  );
+
   if ($("#workspaceTitle")) {
     $("#workspaceTitle").textContent = workspace.name;
   }
@@ -245,12 +297,18 @@ async function loadWorkspace() {
 async function refreshAll() {
   if (!workspace) return;
 
-  const [p, o] = await Promise.all([
+  const [p, f, o] = await Promise.all([
     supabase
       .from("products")
       .select("*")
       .eq("workspace_id", workspace.id)
       .eq("active", true)
+      .order("name", { ascending: true }),
+
+    supabase
+      .from("product_families")
+      .select("*")
+      .eq("workspace_id", workspace.id)
       .order("name", { ascending: true }),
 
     supabase
@@ -264,6 +322,12 @@ async function refreshAll() {
     msg($("#appMessage"), p.error.message);
   } else {
     products = p.data || [];
+  }
+
+  if (f.error) {
+    msg($("#appMessage"), f.error.message);
+  } else {
+    families = f.data || [];
   }
 
   if (o.error) {
@@ -311,6 +375,16 @@ function subscribeRealtime() {
       {
         event: "*",
         schema: "public",
+        table: "product_families",
+        filter: `workspace_id=eq.${workspace.id}`,
+      },
+      refreshAll
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
         table: "orders",
         filter: `workspace_id=eq.${workspace.id}`,
       },
@@ -330,6 +404,10 @@ function renderAll() {
   renderProducts();
   renderCurrentOrders();
   renderHistory();
+
+  if ($("#familiesDialog")?.open) {
+    renderFamiliesManager();
+  }
 }
 
 function hideOldStats() {
@@ -481,9 +559,15 @@ function renderProductResult(host, product) {
   const meta = document.createElement("div");
   meta.className = "meta";
 
+  const family = familyForProduct(product);
+
   meta.textContent = active
-    ? `Current order: Qty ${databaseQty}`
-    : "Not currently on order";
+    ? `Current order: Qty ${databaseQty}${
+        family ? ` · ${family.name} family` : ""
+      }`
+    : `Not currently on order${
+        family ? ` · ${family.name} family` : ""
+      }`;
 
   body.append(title, meta);
 
@@ -1144,6 +1228,252 @@ async function deleteProduct(product) {
 }
 
 /* =====================================================
+   PRODUCT FAMILIES
+===================================================== */
+
+function renderFamiliesManager() {
+  const familyHost = $("#familyList");
+  const productHost = $("#familyProductList");
+
+  if (!familyHost || !productHost) return;
+
+  familyHost.innerHTML = "";
+  productHost.innerHTML = "";
+
+  if (!families.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted small family-empty";
+    empty.textContent =
+      "No families yet. Add Coke, Pepsi, Canada Dry, or another group above.";
+    familyHost.append(empty);
+  }
+
+  families.forEach((family) => {
+    const row = document.createElement("div");
+    row.className = "family-row";
+
+    const body = document.createElement("div");
+
+    const title = document.createElement("div");
+    title.className = "item-title";
+    title.textContent = family.name;
+
+    const count = products.filter(
+      (product) => product.family_id === family.id
+    ).length;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${count} product${count === 1 ? "" : "s"}`;
+
+    body.append(title, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "family-actions";
+
+    actions.append(
+      button("Rename", "mini", () => renameFamily(family)),
+      button("Delete", "mini delete", () => deleteFamily(family))
+    );
+
+    row.append(body, actions);
+    familyHost.append(row);
+  });
+
+  if (!products.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted small family-empty";
+    empty.textContent = "Add products before assigning them to families.";
+    productHost.append(empty);
+    return;
+  }
+
+  products.forEach((product) => {
+    const row = document.createElement("div");
+    row.className = "family-product-row";
+
+    const name = document.createElement("span");
+    name.className = "item-title";
+    name.textContent = product.name;
+
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", `Family for ${product.name}`);
+
+    const unassigned = document.createElement("option");
+    unassigned.value = "";
+    unassigned.textContent = "No family";
+    select.append(unassigned);
+
+    families.forEach((family) => {
+      const option = document.createElement("option");
+      option.value = family.id;
+      option.textContent = family.name;
+      select.append(option);
+    });
+
+    select.value = product.family_id || "";
+
+    select.addEventListener("change", async () => {
+      await assignProductFamily(product, select.value || null);
+    });
+
+    row.append(name, select);
+    productHost.append(row);
+  });
+}
+
+$("#menuBtn")?.addEventListener("click", () => {
+  if (!isSenior()) {
+    msg(
+      $("#appMessage"),
+      "Only a manager or owner can manage product families."
+    );
+    return;
+  }
+
+  msg($("#familyMessage"));
+  renderFamiliesManager();
+  $("#familiesDialog")?.showModal();
+});
+
+$("#closeFamiliesBtn")?.addEventListener(
+  "click",
+  () => $("#familiesDialog")?.close()
+);
+
+$("#familyForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (!isSenior()) return;
+
+  const name = $("#familyName").value.trim();
+
+  if (!name) return;
+
+  const duplicate = families.some(
+    (family) => normalizeName(family.name) === normalizeName(name)
+  );
+
+  if (duplicate) {
+    msg($("#familyMessage"), "That family already exists.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("product_families")
+    .insert({
+      workspace_id: workspace.id,
+      name,
+      created_by: session.user.id,
+    });
+
+  if (error) {
+    msg($("#familyMessage"), error.message);
+    return;
+  }
+
+  $("#familyName").value = "";
+  msg($("#familyMessage"), `${name} family added.`);
+  await refreshAll();
+});
+
+async function renameFamily(family) {
+  if (!isSenior()) return;
+
+  const value = window.prompt("Family name", family.name);
+
+  if (value === null) return;
+
+  const name = value.trim();
+
+  if (!name) {
+    msg($("#familyMessage"), "Family name cannot be empty.");
+    return;
+  }
+
+  const duplicate = families.some(
+    (item) =>
+      item.id !== family.id &&
+      normalizeName(item.name) === normalizeName(name)
+  );
+
+  if (duplicate) {
+    msg($("#familyMessage"), "That family already exists.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("product_families")
+    .update({ name })
+    .eq("id", family.id);
+
+  if (error) {
+    msg($("#familyMessage"), error.message);
+    return;
+  }
+
+  msg($("#familyMessage"), `Family renamed to ${name}.`);
+  await refreshAll();
+}
+
+async function deleteFamily(family) {
+  if (!isSenior()) return;
+
+  const count = products.filter(
+    (product) => product.family_id === family.id
+  ).length;
+
+  const ok = window.confirm(
+    `Delete ${family.name} family?${
+      count
+        ? `\n\n${count} assigned product${count === 1 ? "" : "s"} will become unassigned.`
+        : ""
+    }`
+  );
+
+  if (!ok) return;
+
+  const { error } = await supabase
+    .from("product_families")
+    .delete()
+    .eq("id", family.id);
+
+  if (error) {
+    msg($("#familyMessage"), error.message);
+    return;
+  }
+
+  msg($("#familyMessage"), `${family.name} family deleted.`);
+  await refreshAll();
+}
+
+async function assignProductFamily(product, familyId) {
+  if (!isSenior()) return;
+
+  const { error } = await supabase
+    .from("products")
+    .update({ family_id: familyId })
+    .eq("id", product.id);
+
+  if (error) {
+    msg($("#familyMessage"), error.message);
+    await refreshAll();
+    return;
+  }
+
+  const family = families.find((item) => item.id === familyId);
+
+  msg(
+    $("#familyMessage"),
+    family
+      ? `${product.name} moved to ${family.name} family.`
+      : `${product.name} removed from its family.`
+  );
+
+  await refreshAll();
+}
+
+/* =====================================================
    CURRENT ORDERS
 ===================================================== */
 
@@ -1160,14 +1490,42 @@ function renderCurrentOrders() {
     oldBtn.remove();
   }
 
-  const active =
-    [...activeOrders()].sort(
-      (a, b) =>
-        String(a.product_name || "")
-          .localeCompare(
-            String(b.product_name || "")
-          )
-    );
+  const searchText =
+    $("#currentOrderSearch")?.value?.trim() || "";
+  const query = normalizeName(searchText);
+  const familyIds = matchingFamilyIds(searchText);
+
+  const matchRank = (order) => {
+    if (!query) return 0;
+
+    const product = productForOrder(order);
+
+    if (
+      product?.family_id &&
+      familyIds.has(product.family_id)
+    ) {
+      return 0;
+    }
+
+    if (
+      normalizeName(order.product_name).includes(query)
+    ) {
+      return 1;
+    }
+
+    return 2;
+  };
+
+  const active = [...activeOrders()].sort(
+    (a, b) =>
+      matchRank(a) - matchRank(b) ||
+      String(a.product_name || "").localeCompare(
+        String(b.product_name || "")
+      )
+  );
+
+  const hasMatches =
+    !!query && active.some((order) => matchRank(order) < 2);
 
   const empty = $("#weekEmpty");
 
@@ -1196,10 +1554,35 @@ function renderCurrentOrders() {
     empty.classList.add("hidden");
   }
 
+  if (hasMatches) {
+    const heading = document.createElement("div");
+    heading.className = "order-group-heading";
+    heading.textContent = "Matching family orders";
+    host.append(heading);
+  }
+
+  let otherHeadingAdded = false;
+
   active.forEach((order) => {
+    if (
+      hasMatches &&
+      matchRank(order) === 2 &&
+      !otherHeadingAdded
+    ) {
+      const heading = document.createElement("div");
+      heading.className = "order-group-heading other-orders";
+      heading.textContent = "Other current orders";
+      host.append(heading);
+      otherHeadingAdded = true;
+    }
+
     const row = document.createElement("div");
 
     row.className = "order-row";
+
+    if (hasMatches && matchRank(order) < 2) {
+      row.classList.add("family-match");
+    }
 
     const check = document.createElement("input");
 
@@ -1211,7 +1594,9 @@ function renderCurrentOrders() {
 
     check.addEventListener(
       "change",
-      () => {
+      (event) => {
+        event.stopPropagation();
+
         if (check.checked) {
           selectedOrderIds.add(order.id);
         } else {
@@ -1233,21 +1618,51 @@ function renderCurrentOrders() {
 
     qty.className = "meta";
 
+    const product = productForOrder(order);
+    const family = familyForProduct(product);
+
     qty.textContent =
       `Qty ${Math.max(
         0,
         Number(order.quantity) || 0
-      )}`;
+      )}${family ? ` · ${family.name} family` : ""}`;
 
     body.append(title, qty);
 
-    row.append(check, body);
+    const change = button(
+      "Change",
+      "mini",
+      () => openOrderInProducts(order)
+    );
+
+    row.append(check, body, change);
 
     host.append(row);
   });
 
   ensureCompleteSelectedButton();
 }
+
+function openOrderInProducts(order) {
+  const product = productForOrder(order);
+
+  if (!product) return;
+
+  draftQty.set(
+    product.id,
+    Math.max(0, Number(order.quantity) || 0)
+  );
+
+  $("#productName").value = product.name;
+  showMain("products");
+  renderProducts();
+  $("#productName")?.focus();
+}
+
+$("#currentOrderSearch")?.addEventListener(
+  "input",
+  renderCurrentOrders
+);
 
 /* =====================================================
    COMPLETE BUTTON
@@ -1881,7 +2296,11 @@ async function signOut() {
   memberRole = "staff";
 
   products = [];
+  families = [];
   orders = [];
+
+  $("#menuBtn")?.classList.add("hidden");
+  $("#familiesDialog")?.close();
 
   draftQty.clear();
   selectedOrderIds.clear();

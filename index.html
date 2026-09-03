@@ -252,6 +252,15 @@
         <div class="header-actions">
 
           <button
+            id="menuBtn"
+            class="secondary menu-button hidden"
+            type="button"
+            aria-label="Open settings menu"
+          >
+            ☰
+          </button>
+
+          <button
             id="inviteBtn"
             class="secondary"
             type="button"
@@ -490,6 +499,26 @@
 
         <section class="card list-card">
 
+          <div class="current-order-search">
+
+            <label>
+              Find a product or family
+
+              <input
+                id="currentOrderSearch"
+                type="search"
+                maxlength="100"
+                placeholder="Example: Pepsi or Gatorade"
+                autocomplete="off"
+              />
+            </label>
+
+            <p class="muted small">
+              Matching family orders appear first. All other current orders remain below.
+            </p>
+
+          </div>
+
           <div class="list-head">
 
             <div>
@@ -646,6 +675,80 @@
         </button>
 
       </form>
+
+    </dialog>
+
+
+    <!-- =========================================
+         MANAGE PRODUCT FAMILIES
+    ========================================== -->
+
+    <dialog id="familiesDialog">
+
+      <div class="dialog-card families-dialog-card">
+
+        <div class="dialog-heading">
+
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2>Manage product families</h2>
+            <p class="muted">
+              Create families and move products whenever a vendor group changes.
+            </p>
+          </div>
+
+          <button
+            id="closeFamiliesBtn"
+            class="ghost dialog-close"
+            type="button"
+            aria-label="Close"
+          >
+            Close
+          </button>
+
+        </div>
+
+        <form id="familyForm" class="family-form">
+
+          <label>
+            New family
+
+            <input
+              id="familyName"
+              type="text"
+              maxlength="60"
+              placeholder="Example: Coke"
+              required
+            />
+          </label>
+
+          <button class="primary" type="submit">
+            Add family
+          </button>
+
+        </form>
+
+        <p
+          id="familyMessage"
+          class="message"
+          aria-live="polite"
+        ></p>
+
+        <div id="familyList" class="family-list"></div>
+
+        <div class="family-product-section">
+
+          <h3>Assign products</h3>
+
+          <p class="muted small">
+            Choose a family beside each product. Selecting another family moves the product there.
+          </p>
+
+          <div id="familyProductList"></div>
+
+        </div>
+
+      </div>
 
     </dialog>
 
