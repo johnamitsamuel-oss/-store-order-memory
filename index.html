@@ -371,6 +371,8 @@
                 type="text"
                 maxlength="100"
                 placeholder="Search or add product"
+                autocomplete="off"
+                autocapitalize="words"
                 required
               />
 
@@ -612,10 +614,27 @@
               </h2>
 
               <p class="muted">
-                Completed orders are grouped by date and completion batch.
+                Review completed orders by date.
               </p>
 
             </div>
+
+          </div>
+
+          <div class="history-search">
+
+            <label>
+              Search history
+
+              <input
+                id="historySearch"
+                type="search"
+                maxlength="100"
+                placeholder="Search product or date"
+                autocomplete="off"
+              />
+
+            </label>
 
           </div>
 
@@ -705,37 +724,48 @@
 
     <dialog id="inviteDialog">
 
-      <form
-        method="dialog"
-        class="dialog-card"
-      >
+      <form id="inviteForm" class="dialog-card stack">
 
         <p class="eyebrow">
           Invite team member
         </p>
 
-        <h2>
-          Share this code
-        </h2>
-
-
-        <div
-          id="inviteCodeDisplay"
-          class="invite-code"
-        ></div>
-
+        <h2>Invite by email</h2>
 
         <p class="muted">
-          The team member creates an account, chooses Join shared store, and enters this code.
+          Enter the team member's email address. They will receive a secure sign-in link and join this store.
         </p>
 
+        <label>
+          Email address
 
-        <button
-          class="primary"
-          value="close"
-        >
-          Done
+          <input
+            id="inviteEmail"
+            type="email"
+            autocomplete="email"
+            placeholder="name@example.com"
+            required
+          />
+
+        </label>
+
+        <button id="sendInviteBtn" class="primary" type="submit">
+          Send invite
         </button>
+
+        <button id="closeInviteBtn" class="secondary" type="button">
+          Cancel
+        </button>
+
+        <p id="inviteMessage" class="message" aria-live="polite"></p>
+
+        <details class="invite-fallback">
+
+          <summary>Use invite code instead</summary>
+
+          <div id="inviteCodeDisplay" class="invite-code"></div>
+
+        </details>
 
       </form>
 

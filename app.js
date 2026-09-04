@@ -43,6 +43,29 @@ function normalizeName(value = "") {
     .replace(/\s+/g, " ");
 }
 
+function titleCaseName(value = "") {
+  return String(value).replace(
+    /(^|[\s\-/])([a-z])/g,
+    (_, separator, letter) =>
+      `${separator}${letter.toUpperCase()}`
+  );
+}
+
+function currentUserName() {
+  const metadataName =
+    session?.user?.user_metadata?.full_name ||
+    session?.user?.user_metadata?.name;
+
+  if (metadataName) return titleCaseName(metadataName.trim());
+
+  const emailName =
+    session?.user?.email?.split("@")[0] || "Team member";
+
+  return titleCaseName(
+    emailName.replace(/[._-]+/g, " ")
+  );
+}
+
 function localDateKey(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
     2,
@@ -259,6 +282,40 @@ async function loadWorkspace() {
   }
 
   if (!data?.workspaces) {
+    const pendingInviteCode =
+      new URLSearchParams(window.location.search)
+        .get("join")
+        ?.trim()
+        .toUpperCase();
+
+    if (pendingInviteCode) {
+      const { error: joinError } =
+        await supabase.rpc(
+          "join_workspace",
+          { p_invite_code: pendingInviteCode }
+        );
+
+      if (!joinError) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("join");
+        window.history.replaceState(
+          {},
+          document.title,
+          `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`
+        );
+        return loadWorkspace();
+      }
+
+      msg(
+        $("#workspaceMessage"),
+        `Invitation could not be joined: ${joinError.message}`
+      );
+
+      if ($("#inviteCode")) {
+        $("#inviteCode").value = pendingInviteCode;
+      }
+    }
+
     setScreen("workspace");
     return;
   }
@@ -437,16 +494,16 @@ function prepareProductResultArea() {
   const description = card.querySelector(".muted");
 
   if (heading) {
-    heading.textContent = "Product result";
+    heading.textContent = "Smart suggestions";
   }
 
   if (eyebrow) {
-    eyebrow.textContent = "Order";
+    eyebrow.textContent = "This store";
   }
 
   if (description) {
     description.textContent =
-      "Adjust quantity here and press Done.";
+      "Suggestions use only this store's products, families, and order history.";
   }
 }
 
@@ -523,9 +580,68 @@ function renderProducts() {
     empty.classList.add("hidden");
   }
 
+  const suggestionLabel = document.createElement("div");
+  suggestionLabel.className = "suggestions-label";
+  suggestionLabel.textContent = "Suggestions from this store";
+  host.append(suggestionLabel);
+
+  const familyGroups = new Map();
+  const ungrouped = [];
+
   matches.forEach((product) => {
-    renderProductResult(host, product);
+    if (!product.family_id) {
+      ungrouped.push(product);
+      return;
+    }
+
+    if (!familyGroups.has(product.family_id)) {
+      familyGroups.set(product.family_id, []);
+    }
+
+    familyGroups.get(product.family_id).push(product);
   });
+
+  familyGroups.forEach((familyProducts, familyId) => {
+    const family =
+      families.find((item) => item.id === familyId);
+
+    const group = document.createElement("details");
+    group.className = "product-suggestion-family";
+    group.open = true;
+
+    const summary = document.createElement("summary");
+    const familyName = document.createElement("span");
+    familyName.textContent = family?.name || "Product family";
+
+    const count = document.createElement("span");
+    count.className = "suggestion-count";
+    count.textContent = `${familyProducts.length} item${
+      familyProducts.length === 1 ? "" : "s"
+    }`;
+
+    summary.append(familyName, count);
+
+    group.append(summary);
+
+    familyProducts.forEach((product) => {
+      renderProductResult(group, product);
+    });
+
+    host.append(group);
+  });
+
+  if (ungrouped.length) {
+    const heading = document.createElement("div");
+    heading.className = "suggestion-section-heading";
+    heading.textContent = familyGroups.size
+      ? "Other matching products"
+      : "Matching products";
+    host.append(heading);
+
+    ungrouped.forEach((product) => {
+      renderProductResult(host, product);
+    });
+  }
 }
 
 /* =====================================================
@@ -672,7 +788,16 @@ function renderProductResult(host, product) {
 
 $("#productName")?.addEventListener(
   "input",
-  () => {
+  (event) => {
+    const input = event.currentTarget;
+    const cursor = input.selectionStart;
+    const titledValue = titleCaseName(input.value);
+
+    if (input.value !== titledValue) {
+      input.value = titledValue;
+      input.setSelectionRange(cursor, cursor);
+    }
+
     msg($("#productMessage"));
     renderProducts();
   }
@@ -823,8 +948,9 @@ $("#productForm")?.addEventListener(
 
     msg($("#productMessage"));
 
-    const name =
-      $("#productName").value.trim();
+    const name = titleCaseName(
+      $("#productName").value.trim()
+    );
 
     if (!name) {
       msg(
@@ -990,7 +1116,7 @@ async function editProduct(product) {
 
   if (newName === null) return;
 
-  const cleanName = newName.trim();
+  const cleanName = titleCaseName(newName.trim());
 
   if (!cleanName) {
     msg(
@@ -1153,11 +1279,11 @@ async function deleteProduct(product) {
     );
 
     if (returnToCurrentOrdersAfterDelete) {
-  returnToCurrentOrdersAfterDelete = false;
-  showMain("week");
-} else {
-  renderProducts();
-}
+      returnToCurrentOrdersAfterDelete = false;
+      showMain("week");
+    } else {
+      renderProducts();
+    }
 
     return;
   }
@@ -1231,11 +1357,11 @@ async function deleteProduct(product) {
   );
 
   if (returnToCurrentOrdersAfterDelete) {
-  returnToCurrentOrdersAfterDelete = false;
-  showMain("week");
-} else {
-  renderProducts();
-}
+    returnToCurrentOrdersAfterDelete = false;
+    showMain("week");
+  } else {
+    renderProducts();
+  }
 }
 
 /* =====================================================
@@ -1655,7 +1781,6 @@ function renderCurrentOrders() {
 }
 
 function openOrderInProducts(order) {
-    returnToCurrentOrdersAfterDelete = true;
   const product = productForOrder(order);
 
   if (!product) return;
@@ -1668,6 +1793,7 @@ function openOrderInProducts(order) {
   $("#productName").value = product.name;
   showMain("products");
   renderProducts();
+  returnToCurrentOrdersAfterDelete = true;
   $("#productName")?.focus();
 }
 
@@ -1781,6 +1907,7 @@ async function completeSelectedOrders() {
       status: "completed",
       completed_at: completedAt,
       completed_by: session.user.id,
+      completed_by_name: currentUserName(),
       completion_batch_id: batchId,
     })
     .in("id", ids);
@@ -1818,8 +1945,36 @@ function renderHistory() {
 
   host.innerHTML = "";
 
+  const query = normalizeName(
+    $("#historySearch")?.value || ""
+  );
+
   const history =
-    [...completedOrders()].sort(
+    [...completedOrders()]
+      .filter((order) => {
+        if (!query) return true;
+
+        const completedValue =
+          order.completed_at ||
+          order.updated_at ||
+          order.created_at;
+
+        const dateKey = completedValue
+          ? localDateKey(new Date(completedValue))
+          : order.ordered_on;
+
+        const searchable = [
+          order.product_name,
+          fmtDate(dateKey),
+          fmtTime(completedValue),
+          order.completed_by_name,
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        return normalizeName(searchable).includes(query);
+      })
+      .sort(
       (a, b) =>
         new Date(
           b.completed_at ||
@@ -1831,11 +1986,15 @@ function renderHistory() {
           a.updated_at ||
           a.created_at
         )
-    );
+      );
 
   const empty = $("#historyEmpty");
 
   if (empty) {
+    empty.textContent = query
+      ? "No completed orders match this search."
+      : "No completed orders yet.";
+
     empty.classList.toggle(
       "hidden",
       history.length > 0
@@ -1872,15 +2031,15 @@ function renderHistory() {
         parseDateKey(a)
     );
 
-  dates.forEach((dateKey) => {
+  dates.forEach((dateKey, dateIndex) => {
     const dateOrders =
       dateGroups.get(dateKey);
 
     const dayFolder =
       document.createElement("details");
 
-    dayFolder.className =
-      "history-day";
+    dayFolder.className = "history-day";
+    dayFolder.open = query ? true : dateIndex === 0;
 
     const daySummary =
       document.createElement("summary");
@@ -1888,8 +2047,11 @@ function renderHistory() {
     daySummary.className =
       "history-day-summary";
 
-    daySummary.textContent =
-      fmtDate(dateKey);
+    const dateTitle = document.createElement("span");
+    dateTitle.textContent = fmtDate(dateKey);
+
+    const dateCount = document.createElement("span");
+    dateCount.className = "history-count";
 
     dayFolder.append(daySummary);
 
@@ -1922,6 +2084,12 @@ function renderHistory() {
           )
       );
 
+    dateCount.textContent = `${batchList.length} order${
+      batchList.length === 1 ? "" : "s"
+    }`;
+
+    daySummary.append(dateTitle, dateCount);
+
     batchList.forEach((batch) => {
       const productCount =
         batch.length;
@@ -1941,30 +2109,35 @@ function renderHistory() {
         batch[0].completed_at ||
         batch[0].created_at;
 
-      const batchFolder =
-        document.createElement("details");
+      const batchCard = document.createElement("article");
+      batchCard.className = "history-batch";
 
-      batchFolder.className =
-        "history-batch";
+      const batchHeader = document.createElement("div");
+      batchHeader.className = "history-batch-summary";
 
-      const summary =
-        document.createElement("summary");
+      const check = document.createElement("span");
+      check.className = "history-check";
+      check.setAttribute("aria-hidden", "true");
+      check.textContent = "✓";
 
-      summary.className =
-        "history-batch-summary";
+      const headerText = document.createElement("div");
+
+      const summary = document.createElement("strong");
 
       const time = fmtTime(completedAt);
 
       summary.textContent =
-        `Order completed — ${productCount} product${
-          productCount === 1 ? "" : "s"
-        } — ${totalQty} quantit${
-          totalQty === 1 ? "y" : "ies"
-        }${
-          time ? ` — ${time}` : ""
-        }`;
+        `Completed${time ? ` at ${time}` : ""}`;
 
-      batchFolder.append(summary);
+      const meta = document.createElement("div");
+      meta.className = "history-batch-meta";
+      meta.textContent = `${productCount} product${
+        productCount === 1 ? "" : "s"
+      } • ${totalQty} total unit${totalQty === 1 ? "" : "s"}`;
+
+      headerText.append(summary, meta);
+      batchHeader.append(check, headerText);
+      batchCard.append(batchHeader);
 
       batch.forEach((order) => {
         const row =
@@ -1996,15 +2169,39 @@ function renderHistory() {
 
         row.append(title, qty);
 
-        batchFolder.append(row);
+        batchCard.append(row);
       });
 
-      dayFolder.append(batchFolder);
+      const completedBy = document.createElement("div");
+      completedBy.className = "history-completed-by";
+
+      const savedName = batch.find(
+        (order) => order.completed_by_name
+      )?.completed_by_name;
+
+      const completedUserId = batch.find(
+        (order) => order.completed_by
+      )?.completed_by;
+
+      completedBy.textContent = `Completed by ${
+        savedName ||
+        (completedUserId === session?.user?.id
+          ? currentUserName()
+          : "Team member")
+      }`;
+
+      batchCard.append(completedBy);
+      dayFolder.append(batchCard);
     });
 
     host.append(dayFolder);
   });
 }
+
+$("#historySearch")?.addEventListener(
+  "input",
+  renderHistory
+);
 
 /* =====================================================
    AUTH
@@ -2397,8 +2594,93 @@ $("#goProductsBtn")?.addEventListener(
 
 $("#inviteBtn")?.addEventListener(
   "click",
-  () =>
-    $("#inviteDialog")?.showModal()
+  () => {
+    msg($("#inviteMessage"));
+    if ($("#inviteEmail")) {
+      $("#inviteEmail").value = "";
+    }
+    $("#inviteDialog")?.showModal();
+    window.setTimeout(
+      () => $("#inviteEmail")?.focus(),
+      0
+    );
+  }
+);
+
+$("#closeInviteBtn")?.addEventListener(
+  "click",
+  () => $("#inviteDialog")?.close()
+);
+
+$("#inviteForm")?.addEventListener(
+  "submit",
+  async (event) => {
+    event.preventDefault();
+
+    const email = $("#inviteEmail").value.trim();
+    const sendButton = $("#sendInviteBtn");
+
+    if (!email) {
+      msg($("#inviteMessage"), "Enter an email address.");
+      return;
+    }
+
+    if (!workspace?.invite_code) {
+      msg($("#inviteMessage"), "Store invite code is unavailable.");
+      return;
+    }
+
+    if (
+      normalizeName(email) ===
+      normalizeName(session?.user?.email)
+    ) {
+      msg(
+        $("#inviteMessage"),
+        "Enter the other team member's email address."
+      );
+      return;
+    }
+
+    sendButton.disabled = true;
+    sendButton.textContent = "Sending…";
+    msg($("#inviteMessage"), "Sending invitation…");
+
+    const redirectUrl = new URL(
+      `${window.location.origin}${window.location.pathname}`
+    );
+    redirectUrl.searchParams.set(
+      "join",
+      workspace.invite_code
+    );
+
+    const { error } =
+      await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true,
+          emailRedirectTo: redirectUrl.toString(),
+          data: {
+            invited_to_store: workspace.name,
+          },
+        },
+      });
+
+    sendButton.disabled = false;
+    sendButton.textContent = "Send invite";
+
+    if (error) {
+      msg(
+        $("#inviteMessage"),
+        `Invite could not be sent: ${error.message}`
+      );
+      return;
+    }
+
+    msg(
+      $("#inviteMessage"),
+      `Invitation sent to ${email}.`
+    );
+  }
 );
 
 /* =====================================================

@@ -452,6 +452,151 @@ button {
   justify-content: flex-end;
 }
 
+.suggestions-label,
+.suggestion-section-heading {
+  padding: 12px 18px;
+  background: #f8fafc;
+  color: #64748b;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.76rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.product-suggestion-family {
+  margin: 12px;
+  border: 1px solid #dbe1e8;
+  border-radius: 15px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.product-suggestion-family > summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  font-weight: 850;
+  cursor: pointer;
+  list-style: none;
+}
+
+.product-suggestion-family > summary::-webkit-details-marker {
+  display: none;
+}
+
+.product-suggestion-family > summary::after {
+  content: "⌄";
+  font-size: 1.1rem;
+}
+
+.product-suggestion-family[open] > summary::after {
+  content: "⌃";
+}
+
+.suggestion-count,
+.history-count {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.product-suggestion-family .product-row:last-child {
+  border-bottom: 0;
+}
+
+.history-search {
+  padding: 16px 18px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+#historyList {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.history-day {
+  border: 1px solid #dfe4ea;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.history-day-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 16px;
+  font-size: 1rem;
+  font-weight: 850;
+  cursor: pointer;
+  list-style: none;
+}
+
+.history-day-summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-day-summary::after {
+  content: "⌄";
+  color: #111827;
+  font-size: 1.1rem;
+}
+
+.history-day[open] > .history-day-summary::after {
+  content: "⌃";
+}
+
+.history-batch {
+  margin: 0 14px 14px;
+  border: 1px solid #e1e6ec;
+  border-radius: 15px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
+}
+
+.history-batch-summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.history-check {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #fff;
+  font-weight: 900;
+}
+
+.history-batch-meta,
+.history-completed-by {
+  color: #6b7280;
+  font-size: 0.82rem;
+}
+
+.history-batch-meta {
+  margin-top: 3px;
+}
+
 .history-row {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -462,7 +607,17 @@ button {
 }
 
 .history-qty {
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #111827;
+  color: #fff;
+  font-size: 0.78rem;
   font-weight: 850;
+  white-space: nowrap;
+}
+
+.history-completed-by {
+  padding: 11px 14px 14px;
 }
 
 .empty {
@@ -485,6 +640,18 @@ button {
   border-radius: 14px;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.invite-fallback {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+
+.invite-fallback summary {
+  color: #6b7280;
+  font-size: 0.84rem;
+  font-weight: 750;
+  cursor: pointer;
 }
 
 dialog {
@@ -660,6 +827,10 @@ dialog::backdrop {
   .product-row,
   .history-row {
     grid-template-columns: 1fr;
+  }
+
+  .history-row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .product-actions {
