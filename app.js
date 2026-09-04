@@ -30,6 +30,7 @@ let channel = null;
 
 const draftQty = new Map();
 const selectedOrderIds = new Set();
+let returnToCurrentOrdersAfterDelete = false;
 
 /* =====================================================
    HELPERS
@@ -1151,7 +1152,12 @@ async function deleteProduct(product) {
       `${product.name} permanently deleted.`
     );
 
-    renderProducts();
+    if (returnToCurrentOrdersAfterDelete) {
+  returnToCurrentOrdersAfterDelete = false;
+  showMain("week");
+} else {
+  renderProducts();
+}
 
     return;
   }
@@ -1224,7 +1230,12 @@ async function deleteProduct(product) {
     `${product.name} removed from Products.`
   );
 
+  if (returnToCurrentOrdersAfterDelete) {
+  returnToCurrentOrdersAfterDelete = false;
+  showMain("week");
+} else {
   renderProducts();
+}
 }
 
 /* =====================================================
@@ -1644,6 +1655,7 @@ function renderCurrentOrders() {
 }
 
 function openOrderInProducts(order) {
+    returnToCurrentOrdersAfterDelete = true;
   const product = productForOrder(order);
 
   if (!product) return;
@@ -2330,8 +2342,10 @@ $("#demoBtn")?.addEventListener(
 $$(".main-tab").forEach((btn) =>
   btn.addEventListener(
     "click",
-    () =>
-      showMain(btn.dataset.screen)
+    () => {
+      returnToCurrentOrdersAfterDelete = false;
+      showMain(btn.dataset.screen);
+    }
   )
 );
 
